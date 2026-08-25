@@ -2,7 +2,7 @@
 
 RunWitness is a local execution witness for developers, CI systems, and coding agents.
 
-It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, and versioned machine-readable runtime evidence. v0.0.4 adds stable cross-Run Finding identity on top of the semantic Findings and quality gates introduced in v0.0.3.
+It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, versioned runtime Evidence, semantic Findings, and deterministic quality gates.
 
 The core question is:
 
@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.4
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.5
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.4
+# RunWitness v0.0.5
 ```
 
 ## Run commands
@@ -53,6 +53,35 @@ Each Run is stored under:
 
 `run_id` is UUIDv7 and is propagated to the target process as `RUNWITNESS_RUN_ID`.
 
+## Rails runtime evidence
+
+v0.0.5 adds explicit Rails runtime observation:
+
+```bash
+runwitness run --rails -- bundle exec rspec
+```
+
+The Rails adapter subscribes through the standard `Rails.error` reporter interface. Handled Rails error reports are normalized as `rails.error` Evidence and converted into `runtime.handled_error` Findings.
+
+A successful test process can therefore still fail the RunWitness runtime gate:
+
+```text
+tests / target exit        0
+Rails.error handled        1
+          ↓
+runtime.handled_error
+          ↓
+runtime.no_errors          FAIL
+          ↓
+RunWitness CLI exit        1
+```
+
+RunWitness preserves the target process exit code. The quality gate changes the RunWitness verdict, not the target result.
+
+If `--rails` is explicitly requested but RunWitness cannot confirm that a Rails error reporter was observed, the Run ends with verdict `error` and RunWitness exits `2` rather than claiming a complete observation.
+
+The release gate runs this behavior against real Rails 8.1 on Ruby 3.4, not only a Rails-compatible fixture.
+
 ## OpenTelemetry evidence
 
 Observe a command with OpenTelemetry:
@@ -63,20 +92,20 @@ runwitness run --otel -- bundle exec rspec
 
 RunWitness deliberately does not implement its own OTLP collector. The reference adapter uses [`tobert/otlp-mcp`](https://github.com/tobert/otlp-mcp) as a local, Run-owned backend.
 
-Install `otlp-mcp` separately and make sure it is available on `PATH`. One upstream-supported source installation path is:
+Install `otlp-mcp` separately and make sure it is available on `PATH`:
 
 ```bash
 go install github.com/tobert/otlp-mcp/cmd/otlp-mcp@latest
 ```
 
-The current upstream module requires Go 1.25. If `otlp-mcp` lives elsewhere, point RunWitness at the executable:
+The current upstream module requires Go 1.25. If the binary lives elsewhere:
 
 ```bash
 RUNWITNESS_OTLP_MCP_BIN=/path/to/otlp-mcp \
   runwitness run --otel -- bundle exec rspec
 ```
 
-For an observed Run, RunWitness starts an isolated `otlp-mcp` process, asks it for the Run-local OTLP endpoint, creates a start snapshot, injects exporter environment variables into the target process, executes the target, creates an end snapshot, and normalizes data between the two snapshots.
+For an observed Run, RunWitness starts an isolated `otlp-mcp` process, discovers its Run-local OTLP endpoint, creates start/end snapshots, injects exporter environment variables, executes the target, and normalizes telemetry between the two snapshots.
 
 The target receives exporter variables such as:
 
@@ -85,29 +114,26 @@ OTEL_EXPORTER_OTLP_ENDPOINT=<run-local endpoint>
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
-RunWitness also preserves existing `OTEL_RESOURCE_ATTRIBUTES` and adds exactly one:
+RunWitness preserves existing `OTEL_RESOURCE_ATTRIBUTES` and adds:
 
 ```text
 runwitness.run_id=<uuidv7>
 ```
 
-When the application is instrumented and exports telemetry during the Run, `evidence.jsonl` contains schema-valid Evidence records with initial kinds:
+Normalized Evidence kinds currently include:
 
 ```text
 otel.span
 otel.log
 otel.metric
+rails.error
 ```
 
 The Evidence schema is `schemas/evidence-v1.schema.json`.
 
-RunWitness does not yet auto-instrument Ruby, Python, Node.js, or another runtime. Existing OpenTelemetry instrumentation or a future language adapter is responsible for emitting telemetry.
-
-If `--otel` is explicitly requested but the backend cannot be started or observed reliably, RunWitness returns verdict `error` rather than pretending the application failed or claiming a complete observation.
-
 ## Runtime findings and gates
 
-The first semantic rule over normalized Evidence is:
+The first OpenTelemetry semantic rule is:
 
 ```text
 otel.span status=ERROR
@@ -119,31 +145,29 @@ runtime.no_errors gate
 verdict fail
 ```
 
-For each normalized OpenTelemetry span whose status is `ERROR`, RunWitness records a `runtime.error` Finding in `run.json`. The Finding references the exact Evidence record that caused it and carries rule ID `otel.span.error`.
-
-Those Findings trigger the built-in `runtime.no_errors` gate with action `fail`.
-
-This allows process status and observed runtime behavior to remain separate. For example, a test command can exit successfully while runtime telemetry still proves an application error occurred:
+The Rails rule introduced in v0.0.5 feeds the same gate:
 
 ```text
-target exit code: 0
-runtime.error findings: 1
-runtime.no_errors: triggered
-RunWitness verdict: fail
-RunWitness CLI exit: 1
+Rails.error handled=true
+        ↓
+runtime.handled_error Finding
+        ↓
+runtime.no_errors gate
+        ↓
+verdict fail
 ```
 
-RunWitness does not rewrite the target exit code. A RunWitness or instrumentation failure still has higher priority and produces verdict `error` with CLI exit `2`.
+This keeps process status and observed runtime behavior separate. A target can exit successfully while runtime evidence still proves that the change is not behaviorally clean.
+
+RunWitness or instrumentation failures retain higher priority and produce verdict `error` with CLI exit `2`.
 
 ## Stable Finding identity
 
-v0.0.4 makes Finding identity stable across independent Runs.
+Finding identity is stable across independent Runs.
 
-The same logical runtime problem produces the same `finding_id` even when its Run ID, Evidence ID, trace ID, span ID, and timestamps are different. For the current `otel.span.error` rule, the identity is derived from stable semantic inputs: Finding kind, rule ID, OpenTelemetry service name, and span name.
+The same logical problem produces the same `finding_id` even when Run IDs, Evidence IDs, trace/span IDs, and timestamps differ. Run-local Evidence references remain separate.
 
-Run-local Evidence references remain separate. This means two Runs can point to different Evidence records while still recognizing that they observed the same logical Finding.
-
-That invariant is the foundation for future Run comparison semantics such as:
+This invariant is the foundation for future Run comparison semantics:
 
 ```text
 new
@@ -180,8 +204,6 @@ The stable CLI mapping is:
 
 A command that cannot be started is still recorded as a Run with verdict `error` and a null target exit code.
 
-A target command that exits non-zero remains a target failure even when OTEL Evidence collection succeeds. Conversely, an OTEL collection failure is recorded as an instrumentation error, not as an application failure.
-
 ## Contract-first development
 
 RunWitness treats external behavior as a contract.
@@ -190,12 +212,21 @@ The project rule is:
 
 > No implementation before executable contract. No contract changes to make an implementation pass.
 
-Black-box acceptance tests are written and reviewed first. During the implementation phase they are locked. See `CONTRIBUTING.md` for the workflow.
+Black-box acceptance tests are written and reviewed first. During implementation they are locked. See `CONTRIBUTING.md` for the workflow.
 
 ## Current scope
 
-v0.0.4 consists of the universal Runner core, the OpenTelemetry Evidence adapter, the first semantic runtime Finding and quality gate, and deterministic Finding identity across Runs.
+v0.0.5 includes:
 
-Still deliberately deferred are error-log and exception-event Findings, configurable gate policy, baselines and Run diffs, Ruby/Rails auto-instrumentation, browser evidence, PostgreSQL analysis, MCP as a public RunWitness interface, and local-to-production correlation.
+- universal Runner core;
+- Git and process evidence;
+- OpenTelemetry Evidence through `otlp-mcp`;
+- Rails `Rails.error` Evidence through `--rails`;
+- `runtime.error` and `runtime.handled_error` Findings;
+- deterministic Finding identity;
+- the built-in `runtime.no_errors` quality gate;
+- real upstream OTEL and real Rails interoperability gates.
+
+Still deliberately deferred are baseline Run comparison, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, a public RunWitness MCP interface, and local-to-production correlation.
 
 Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, and normalized Evidence uses `schemas/evidence-v1.schema.json`.
