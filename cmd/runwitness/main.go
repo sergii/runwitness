@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"github.com/sergii/runwitness/internal/runner"
+	"github.com/sergii/runwitness/internal/railsintegration"
 )
 
 func main() {
-	os.Exit(runner.Main(os.Args[1:]))
+	os.Exit(railsintegration.Main(os.Args[1:]))
 }
