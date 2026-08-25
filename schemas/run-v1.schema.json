@@ -400,6 +400,12 @@
         "finding_ids": {
           "$ref": "#/$defs/finding_id_list"
         },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/comparison_value"
+          }
+        },
         "message": {
           "type": "string"
         }
