@@ -16,12 +16,20 @@ jobs:
   tag:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
+
+      - name: Verify successful commit checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Detect version bump
         id: version
@@ -62,13 +70,13 @@ jobs:
           git fetch --tags --force
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             existing="$(git rev-list -n 1 "$TAG")"
-            if [[ "$existing" != "$GITHUB_SHA" ]]; then
+            if [[ "$existing" != "$RELEASE_SHA" ]]; then
               echo "$TAG already exists at $existing; refusing to move an immutable release tag" >&2
               exit 1
             fi
-            echo "$TAG already points to $GITHUB_SHA"
+            echo "$TAG already points to $RELEASE_SHA"
             exit 0
           fi
 
-          git tag "$TAG" "$GITHUB_SHA"
+          git tag "$TAG" "$RELEASE_SHA"
           git push origin "$TAG"
