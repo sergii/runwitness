@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.0.1-dev"
+const Version = "0.0.1"
 
 type Document struct {
 	SchemaVersion int       `json:"schema_version"`
@@ -30,6 +30,7 @@ type Document struct {
 
 type Run struct {
 	RunID            string      `json:"run_id"`
+	Label            string      `json:"label,omitempty"`
 	Environment      string      `json:"environment"`
 	StartedAt        string      `json:"started_at"`
 	FinishedAt       string      `json:"finished_at"`
@@ -88,6 +89,11 @@ type Verdict struct {
 
 type Gate map[string]any
 
+type RunOptions struct {
+	Label  string
+	Target []string
+}
+
 type gitSnapshot struct {
 	Repository *Repository
 	Branch     *string
@@ -95,14 +101,19 @@ type gitSnapshot struct {
 }
 
 func Main(args []string) int {
-	target, err := parseRunArgs(args)
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Printf("RunWitness v%s\n", Version)
+		return 0
+	}
+
+	options, err := parseRunArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, "usage: runwitness run -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: runwitness run [--label <name>] -- <command> [args...]")
 		return 2
 	}
 
-	verdict, err := Execute(target)
+	verdict, err := ExecuteWithOptions(options)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "runwitness: %v\n", err)
 		return 2
@@ -118,27 +129,54 @@ func Main(args []string) int {
 	}
 }
 
-func parseRunArgs(args []string) ([]string, error) {
-	if len(args) < 3 || args[0] != "run" {
-		return nil, errors.New("expected run command")
+func parseRunArgs(args []string) (RunOptions, error) {
+	if len(args) == 0 || args[0] != "run" {
+		return RunOptions{}, errors.New("expected run command")
 	}
 
+	options := RunOptions{}
 	separator := -1
+
 	for i := 1; i < len(args); i++ {
-		if args[i] == "--" {
+		switch args[i] {
+		case "--":
 			separator = i
-			break
+			i = len(args)
+		case "--label":
+			if i+1 >= len(args) || args[i+1] == "--" {
+				return RunOptions{}, errors.New("--label requires a non-empty value")
+			}
+			if args[i+1] == "" {
+				return RunOptions{}, errors.New("--label requires a non-empty value")
+			}
+			if options.Label != "" {
+				return RunOptions{}, errors.New("--label may be specified only once")
+			}
+			options.Label = args[i+1]
+			i++
+		default:
+			return RunOptions{}, fmt.Errorf("unknown option %q", args[i])
 		}
 	}
 
 	if separator == -1 || separator == len(args)-1 {
-		return nil, errors.New("target command is required after --")
+		return RunOptions{}, errors.New("target command is required after --")
 	}
 
-	return append([]string(nil), args[separator+1:]...), nil
+	options.Target = append([]string(nil), args[separator+1:]...)
+	return options, nil
 }
 
 func Execute(target []string) (string, error) {
+	return ExecuteWithOptions(RunOptions{Target: target})
+}
+
+func ExecuteWithOptions(options RunOptions) (string, error) {
+	target := options.Target
+	if len(target) == 0 {
+		return "error", errors.New("target command is required")
+	}
+
 	started := time.Now().UTC()
 	runID, err := newUUIDv7(started)
 	if err != nil {
@@ -233,6 +271,7 @@ func Execute(target []string) (string, error) {
 		SchemaVersion: 1,
 		Run: Run{
 			RunID:            runID,
+			Label:            options.Label,
 			Environment:      "local",
 			StartedAt:        started.Format(time.RFC3339Nano),
 			FinishedAt:       finished.Format(time.RFC3339Nano),
