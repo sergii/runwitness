@@ -54,7 +54,7 @@ class RunWitnessCLIV001Contract(unittest.TestCase):
             result = self.invoke(cwd, "--version")
 
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual("RunWitness v0.0.7\n", result.stdout)
+            self.assertEqual("RunWitness v0.0.8\n", result.stdout)
             self.assertEqual("", result.stderr)
             self.assertFalse((cwd / ".runwitness").exists())
 
