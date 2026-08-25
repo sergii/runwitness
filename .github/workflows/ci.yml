@@ -33,8 +33,11 @@ jobs:
       - name: Verify Go formatting
         run: |
           files="$(gofmt -l .)"
-          printf '%s\n' "$files"
-          test -z "$files"
+          if [[ -n "$files" ]]; then
+            printf '%s\n' "$files"
+            gofmt -d internal/railsadapter/adapter.go || true
+            exit 1
+          fi
 
       - name: Run go vet
         run: go vet ./...
