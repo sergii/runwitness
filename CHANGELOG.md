@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.0.7
+
+Makes explicit baseline comparison actionable through baseline-aware Finding gate scope.
+
+### Added
+
+- opt-in `runwitness run --baseline <run_id> --gate-scope new -- <command>` patch-validation mode
+- explicit `--gate-scope all|new` policy with `all` as the backward-compatible default
+- baseline metadata recording the selected Finding gate scope when explicitly supplied
+- filtering of existing Finding-based gate membership against `diff.new`
+- acceptance coverage proving unchanged Findings remain visible but can pass scoped gates
+- acceptance coverage proving new Findings continue to fail their existing gates
+- usage validation for missing baselines and invalid gate-scope values before the Run boundary
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.7`
+- README documents the new-only behavioral regression workflow
+- baseline comparison can now drive an opt-in gate policy instead of being descriptive only
+
+### Preserved
+
+- omitting `--gate-scope` keeps the v0.0.6 absolute gate behavior
+- explicit `--gate-scope all` keeps the same absolute behavior
+- unchanged Findings remain in the current Finding set and `diff.unchanged`
+- resolved Findings do not trigger current gates
+- target process failures remain `fail` regardless of Finding scope
+- RunWitness and required-adapter failures remain `error`
+- real upstream `otlp-mcp` and real Rails 8.1 / Ruby 3.4 interoperability remain release gates
+
+### Why it matters
+
+v0.0.7 lets RunWitness answer the patch-validation question: "Did this code change introduce a new behavioral problem?" A known baseline problem can remain visible without being attributed to the current patch, while a newly introduced Finding still fails the quality gate.
+
+### Deferred
+
+Automatic baseline selection, remote baselines, metric-aware `regressed`/`improved` semantics, configurable per-rule policies, ActiveRecord query regression/N+1 analysis, browser correlation, deeper PostgreSQL analysis, public RunWitness MCP tools, and production correlation remain future contract slices.
+
 ## v0.0.6
 
 Adds the first explicit Run-to-Run semantic Finding comparison.
