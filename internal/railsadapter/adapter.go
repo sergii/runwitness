@@ -37,6 +37,7 @@ type event struct {
 	Location     map[string]any `json:"location"`
 	Backtrace    []string       `json:"backtrace"`
 	Context      map[string]any `json:"context"`
+	SQLEventKey  string         `json:"sql_event_key"`
 	SQLStatement string         `json:"sql_statement"`
 	SQLName      string         `json:"sql_name"`
 	SQLCached    bool           `json:"sql_cached"`
@@ -81,6 +82,7 @@ func (a *Adapter) Collect() ([]Evidence, bool, error) {
 
 	evidence := make([]Evidence, 0)
 	subscribed := false
+	seenSQLEvents := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -140,6 +142,12 @@ func (a *Adapter) Collect() ([]Evidence, bool, error) {
 			name := strings.TrimSpace(item.SQLName)
 			if item.SQLCached || statement == "" || isIgnoredSQLName(name) {
 				continue
+			}
+			if item.SQLEventKey != "" {
+				if _, duplicate := seenSQLEvents[item.SQLEventKey]; duplicate {
+					continue
+				}
+				seenSQLEvents[item.SQLEventKey] = struct{}{}
 			}
 			durationMS := item.DurationMS
 			if durationMS < 0 {
