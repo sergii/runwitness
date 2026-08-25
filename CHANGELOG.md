@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.0.6
+
+Adds the first explicit Run-to-Run semantic Finding comparison.
+
+### Added
+
+- explicit `runwitness run --baseline <run_id> -- <command>` comparison mode
+- local baseline resolution from `.runwitness/runs/<run_id>/run.json`
+- source-agnostic comparison over finalized stable `finding_id` values
+- deterministic `new`, `resolved`, and `unchanged` Finding classifications
+- reserved empty `regressed` and `improved` diff classes for future metric-aware comparison
+- acceptance coverage for unchanged, new, resolved, replaced, sorted/unique diff lists, and missing-baseline behavior
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.6`
+- README documents explicit baseline comparison and its reliability boundary
+- stable Finding identity is now consumed by a public Run comparison surface rather than only prepared for future use
+
+### Preserved
+
+- baseline comparison is descriptive and does not weaken existing absolute quality gates
+- an unchanged current runtime problem still triggers `runtime.no_errors`
+- target process exit codes remain unchanged by comparison
+- a RunWitness or required-adapter observation error does not claim baseline Findings were resolved
+- OpenTelemetry and Rails Findings share the same source-agnostic comparison semantics
+- real upstream `otlp-mcp` and real Rails 8.1 / Ruby 3.4 interoperability remain release gates
+
+### Why it matters
+
+v0.0.6 is the first release that directly answers whether a logical runtime problem is new, still present, or resolved relative to an explicitly selected prior Run. This turns stable Finding identity into useful before/after behavioral evidence.
+
+### Deferred
+
+Automatic baseline selection, remote baselines, metric-aware `regressed`/`improved` semantics, baseline-aware gate policy, ActiveRecord query regression/N+1 analysis, browser correlation, deeper PostgreSQL analysis, public RunWitness MCP tools, and production correlation remain future contract slices.
+
 ## v0.0.5
 
 Adds the first framework-specific runtime adapter for Rails.
