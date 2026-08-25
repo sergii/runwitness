@@ -1,6 +1,6 @@
 # RunWitness MCP Read Surface v0.0.8
 
-Status: Contract candidate
+Status: Stable
 
 ## Purpose
 
@@ -171,7 +171,7 @@ It MUST NOT:
 
 ## Version boundary
 
-This feature contract does not itself advance the stable release version. The implementation remains on the current stable version until a separate v0.0.8 release contract is merged.
+The feature is part of the stable v0.0.8 release surface.
 
 ## Explicitly deferred
 
@@ -190,7 +190,7 @@ v0.0.8 does not yet add:
 
 ## Acceptance boundary
 
-The locked black-box contract MUST prove:
+The locked black-box contract proves:
 
 1. `runwitness mcp` speaks MCP over stdio;
 2. `tools/list` exposes `list_runs` and `get_run` as the public RunWitness tools;
@@ -201,4 +201,4 @@ The locked black-box contract MUST prove:
 7. `get_run` returns the exact canonical Run document for a valid Run ID;
 8. invalid or missing Run IDs are tool errors without server termination;
 9. a malformed Run cannot be silently omitted by `list_runs`;
-10. all earlier v0.0.1-v0.0.7 contracts remain unchanged during implementation.
+10. all earlier v0.0.1-v0.0.7 contracts remain compatible.

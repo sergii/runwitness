@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.7
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.8
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.7
+# RunWitness v0.0.8
 ```
 
 ## Run commands
@@ -50,6 +50,42 @@ Each Run is stored under:
 ```
 
 `run_id` is UUIDv7 and is propagated to the target process as `RUNWITNESS_RUN_ID`.
+
+## MCP for coding agents
+
+v0.0.8 exposes the canonical local Run store to coding agents through a read-only MCP stdio server:
+
+```bash
+runwitness mcp
+```
+
+The first public RunWitness MCP tool surface contains exactly:
+
+```text
+list_runs
+get_run
+```
+
+`list_runs` returns deterministic newest-first Run summaries. `get_run` returns the exact canonical decoded `run.json` document for a UUIDv7 Run ID. Successful calls expose machine-readable `structuredContent`, so an agent does not need to scrape terminal prose.
+
+The important invariant is that the CLI, CI, and MCP adapter all use the same Run model:
+
+```text
+CLI / CI / coding agent
+          |
+          v
+ same canonical Run store
+```
+
+The v0.0.8 MCP surface is deliberately local and read-only. It does not create Runs, execute target commands, bind a network listener, expose arbitrary filesystem reads, follow Run-store symlink escapes, or mutate Run artifacts. Tool-level validation/data failures remain MCP tool errors and do not terminate a healthy server.
+
+The server reads Runs only from the working directory's local store:
+
+```text
+<cwd>/.runwitness/runs/
+```
+
+An absent store is a valid empty store and querying it does not create `.runwitness/`.
 
 ## Compare with a baseline Run
 
@@ -284,7 +320,7 @@ Black-box acceptance tests are written and reviewed first. During implementation
 
 ## Current scope
 
-v0.0.7 includes:
+v0.0.8 includes:
 
 - universal Runner core;
 - Git and process evidence;
@@ -296,8 +332,9 @@ v0.0.7 includes:
 - explicit local baseline selection through `--baseline <run_id>`;
 - deterministic `new`, `resolved`, and `unchanged` Finding comparison;
 - explicit baseline-aware Finding gate scope through `--gate-scope all|new`;
+- local read-only MCP stdio access through `list_runs` and `get_run`;
 - real upstream OTEL and real Rails interoperability gates.
 
-Still deliberately deferred are automatic baseline selection, metric-aware `regressed`/`improved` comparison, configurable per-rule policies, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, a public RunWitness MCP interface, and local-to-production correlation.
+Still deliberately deferred are MCP Run execution, raw Evidence search/pagination through MCP, stdout/stderr retrieval through MCP, automatic baseline selection, metric-aware `regressed`/`improved` comparison, configurable per-rule policies, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, remote Run stores, MCP resources/prompts, and local-to-production correlation.
 
-Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, and normalized Evidence uses `schemas/evidence-v1.schema.json`.
+Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, normalized Evidence uses `schemas/evidence-v1.schema.json`, and the MCP v0.0.8 contract is `specs/mcp-v0.0.8.md`.

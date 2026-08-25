@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.0.8
+
+Adds the first public agent-native read surface over the canonical local Run store through MCP.
+
+### Added
+
+- `runwitness mcp` local stdio MCP server
+- read-only `list_runs` and `get_run` tools
+- deterministic newest-first local Run discovery summaries
+- exact canonical `run.json` retrieval by UUIDv7 Run ID
+- machine-readable MCP `structuredContent` for successful tool calls
+- black-box MCP acceptance coverage over the public stdio protocol
+- validation that malformed Run data is reported rather than silently omitted
+- local Run-store path validation that rejects traversal and symlink escape paths
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.8`
+- README documents the first coding-agent MCP workflow and its local read-only security boundary
+- the same canonical Run model is now directly consumable by CLI, CI, and coding agents
+
+### Preserved
+
+- the MCP adapter does not create Runs, execute target commands, bind a network listener, expose arbitrary file reads, or mutate Run artifacts
+- MCP tool failures remain MCP tool errors rather than RunWitness application verdicts
+- the Runner core, baseline comparison, and gate semantics remain unchanged
+- target process exit codes remain unchanged by observation or MCP access
+- real upstream `otlp-mcp` and real Rails 8.1 / Ruby 3.4 interoperability remain release gates
+
+### Why it matters
+
+v0.0.8 lets coding agents inspect RunWitness runtime evidence through a standard protocol without scraping terminal prose and without granting the MCP server execution authority. The CLI, CI, and agent surface now converge on the same canonical local Run model.
+
+### Deferred
+
+MCP Run execution, raw Evidence search/pagination, stdout/stderr retrieval through MCP, automatic baseline selection, remote Run stores, MCP resources/prompts, metric-aware `regressed`/`improved` semantics, ActiveRecord query regression/N+1 analysis, browser correlation, deeper PostgreSQL analysis, and production correlation remain future contract slices.
+
 ## v0.0.7
 
 Makes explicit baseline comparison actionable through baseline-aware Finding gate scope.
