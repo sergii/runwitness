@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.0.4
+
+Makes semantic Finding identity stable across independent Runs.
+
+### Added
+
+- executable contract proving the same logical runtime problem keeps the same `finding_id` across Runs
+- acceptance coverage proving different logical operations can produce different Finding IDs
+- versioned semantic fingerprint inputs for the initial `runtime.error` Finding
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.4`
+- `runtime.error` Finding IDs are derived from stable semantic inputs rather than Run-local Evidence IDs
+- current `otel.span.error` identity uses Finding kind, rule ID, OpenTelemetry service name, and span name
+
+### Preserved
+
+- `evidence_refs` remain Run-local and point to the exact Evidence that produced each Finding
+- Run IDs, Evidence IDs, trace IDs, span IDs, and timestamps do not participate in Finding identity
+- runtime gate and target process semantics introduced in v0.0.3 remain unchanged
+- real upstream `otlp-mcp` interoperability remains a release gate
+
+### Why it matters
+
+Stable Finding identity is required for future Run comparison to classify logical problems as `new`, `unchanged`, `resolved`, `regressed`, or `improved` instead of treating every observation as a new Finding.
+
+### Deferred
+
+Baseline selection and Run diffing, Ruby/Rails runtime instrumentation, browser correlation, database analysis, public RunWitness MCP tools, and production correlation remain future contract slices.
+
 ## v0.0.3
 
 Adds the first semantic runtime Finding and quality gate on top of normalized OpenTelemetry Evidence.

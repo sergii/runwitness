@@ -2,7 +2,7 @@
 
 RunWitness is a local execution witness for developers, CI systems, and coding agents.
 
-It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, and versioned machine-readable runtime evidence. v0.0.3 adds the first semantic Finding and quality gate on top of OpenTelemetry Evidence.
+It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, and versioned machine-readable runtime evidence. v0.0.4 adds stable cross-Run Finding identity on top of the semantic Findings and quality gates introduced in v0.0.3.
 
 The core question is:
 
@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.3
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.4
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.3
+# RunWitness v0.0.4
 ```
 
 ## Run commands
@@ -107,7 +107,7 @@ If `--otel` is explicitly requested but the backend cannot be started or observe
 
 ## Runtime findings and gates
 
-v0.0.3 adds the first semantic rule over normalized Evidence:
+The first semantic rule over normalized Evidence is:
 
 ```text
 otel.span status=ERROR
@@ -134,6 +134,24 @@ RunWitness CLI exit: 1
 ```
 
 RunWitness does not rewrite the target exit code. A RunWitness or instrumentation failure still has higher priority and produces verdict `error` with CLI exit `2`.
+
+## Stable Finding identity
+
+v0.0.4 makes Finding identity stable across independent Runs.
+
+The same logical runtime problem produces the same `finding_id` even when its Run ID, Evidence ID, trace ID, span ID, and timestamps are different. For the current `otel.span.error` rule, the identity is derived from stable semantic inputs: Finding kind, rule ID, OpenTelemetry service name, and span name.
+
+Run-local Evidence references remain separate. This means two Runs can point to different Evidence records while still recognizing that they observed the same logical Finding.
+
+That invariant is the foundation for future Run comparison semantics such as:
+
+```text
+new
+unchanged
+resolved
+regressed
+improved
+```
 
 ## Git state
 
@@ -176,7 +194,7 @@ Black-box acceptance tests are written and reviewed first. During the implementa
 
 ## Current scope
 
-v0.0.3 consists of the universal Runner core, the OpenTelemetry Evidence adapter, and the first semantic runtime Finding and quality gate.
+v0.0.4 consists of the universal Runner core, the OpenTelemetry Evidence adapter, the first semantic runtime Finding and quality gate, and deterministic Finding identity across Runs.
 
 Still deliberately deferred are error-log and exception-event Findings, configurable gate policy, baselines and Run diffs, Ruby/Rails auto-instrumentation, browser evidence, PostgreSQL analysis, MCP as a public RunWitness interface, and local-to-production correlation.
 
