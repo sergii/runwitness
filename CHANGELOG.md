@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.0.11
+
+Adds an explicit opt-in quality gate for Rails query-count regressions while preserving descriptive comparison behavior by default.
+
+### Added
+
+- `--fail-on-query-regression` policy flag for baseline-backed Rails query-count validation
+- deterministic `database.no_query_count_regressions` gate with action `fail`
+- gate evaluation over finalized `diff.regressed` comparison state
+- visible passed gate when requested and no eligible query-count regression exists
+- compatibility coverage with `--gate-scope new`
+- usage validation requiring an explicit baseline before the Run boundary
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.11`
+- Rails query-count regressions can now become a build-blocking policy only when explicitly requested
+- README documents default descriptive behavior and the opt-in fail workflow
+
+### Preserved
+
+- omitting `--fail-on-query-regression` preserves v0.0.10 behavior exactly
+- `Finding severity != gate action`
+- warning query-count Findings remain non-gating by default
+- target process exit codes are never rewritten by the query regression gate
+- RunWitness or required-observation `error` verdicts are never downgraded to `fail`
+- `--gate-scope new` continues to govern Finding-newness policy independently from metric regression policy
+- real upstream `otlp-mcp` and real Rails 8.1 / Ruby 3.4 interoperability remain release gates
+
+### Why it matters
+
+v0.0.11 turns before/after Rails query-count evidence into an enforceable CI decision without forcing one global policy on every project. A team or coding agent can keep regressions descriptive during exploration, then explicitly require a clean query-count comparison when validating a patch.
+
+### Deferred
+
+Configurable absolute or percentage thresholds, N+1 classification, query-duration gates, SQL AST/literal-aware normalization, allocation or memory regression, PostgreSQL execution-plan analysis, automatic baseline selection, browser correlation, remote Run stores, MCP Run execution, and production correlation remain future contract slices.
+
 ## v0.0.10
 
 Adds the first metric-aware Rails database comparison while keeping database policy descriptive rather than gating.
