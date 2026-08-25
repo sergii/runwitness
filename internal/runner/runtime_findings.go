@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -8,7 +10,7 @@ import (
 )
 
 const (
-	otelSpanErrorRuleID   = "otel.span.error"
+	otelSpanErrorRuleID    = "otel.span.error"
 	runtimeNoErrorsRuleID = "runtime.no_errors"
 )
 
@@ -27,7 +29,7 @@ func deriveRuntimeFindings(runID string, evidence []oteladapter.Evidence) ([]Fin
 		}
 
 		evidenceID := evidenceRecordID(runID, index)
-		findingID := "rwf_otel_span_error_" + evidenceID
+		findingID := runtimeErrorFindingID(item)
 		summary := "OpenTelemetry span reported ERROR"
 		if spanName, ok := stringAttribute(item.Attributes, "span.name"); ok && spanName != "" {
 			summary += ": " + spanName
@@ -57,6 +59,30 @@ func deriveRuntimeFindings(runID string, evidence []oteladapter.Evidence) ([]Fin
 		"message":     fmt.Sprintf("%d runtime error finding(s) observed", len(findingIDs)),
 	}}
 	return findings, gates
+}
+
+func runtimeErrorFindingID(item oteladapter.Evidence) string {
+	serviceName, _ := stringAttribute(item.Attributes, "service.name")
+	spanName, _ := stringAttribute(item.Attributes, "span.name")
+
+	return stableFindingID(
+		"finding.v1",
+		"runtime.error",
+		otelSpanErrorRuleID,
+		serviceName,
+		spanName,
+	)
+}
+
+func stableFindingID(parts ...string) string {
+	var fingerprint strings.Builder
+	for _, part := range parts {
+		fmt.Fprintf(&fingerprint, "%d:", len(part))
+		fingerprint.WriteString(part)
+	}
+
+	digest := sha256.Sum256([]byte(fingerprint.String()))
+	return "rwf_" + hex.EncodeToString(digest[:16])
 }
 
 func evidenceRecordID(runID string, index int) string {
