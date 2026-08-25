@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -15,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sergii/runwitness/internal/oteladapter"
 )
 
 const Version = "0.0.1"
@@ -89,8 +92,20 @@ type Verdict struct {
 
 type Gate map[string]any
 
+type EvidenceRecord struct {
+	SchemaVersion int            `json:"schema_version"`
+	EvidenceID    string         `json:"evidence_id"`
+	RunID         string         `json:"run_id"`
+	Source        string         `json:"source"`
+	Kind          string         `json:"kind"`
+	ObservedAt    string         `json:"observed_at"`
+	Attributes    map[string]any `json:"attributes"`
+	Payload       map[string]any `json:"payload"`
+}
+
 type RunOptions struct {
 	Label  string
+	OTEL   bool
 	Target []string
 }
 
@@ -109,7 +124,7 @@ func Main(args []string) int {
 	options, err := parseRunArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, "usage: runwitness run [--label <name>] -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: runwitness run [--label <name>] [--otel] -- <command> [args...]")
 		return 2
 	}
 
@@ -154,6 +169,11 @@ func parseRunArgs(args []string) (RunOptions, error) {
 			}
 			options.Label = args[i+1]
 			i++
+		case "--otel":
+			if options.OTEL {
+				return RunOptions{}, errors.New("--otel may be specified only once")
+			}
+			options.OTEL = true
 		default:
 			return RunOptions{}, fmt.Errorf("unknown option %q", args[i])
 		}
@@ -203,12 +223,8 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 	}
 
 	evidencePath := filepath.Join(runDirectory, "evidence.jsonl")
-	evidenceFile, err := os.OpenFile(evidencePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
+	if err := os.WriteFile(evidencePath, nil, 0o644); err != nil {
 		return "error", fmt.Errorf("create evidence.jsonl: %w", err)
-	}
-	if err := evidenceFile.Close(); err != nil {
-		return "error", fmt.Errorf("close evidence.jsonl: %w", err)
 	}
 
 	stdoutFile, err := os.Create(filepath.Join(runDirectory, "stdout.log"))
@@ -222,9 +238,66 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 		return "error", fmt.Errorf("create stderr.log: %w", err)
 	}
 
+	adapters := make([]Adapter, 0, 1)
+	targetEnvironment := mergeEnvironment(os.Environ(), map[string]string{
+		"RUNWITNESS_RUN_ID": runID,
+	})
+
+	var otel *oteladapter.Adapter
+	var otelStartSnapshot string
+	var otelEndSnapshot string
+	var preTargetError error
+
+	if options.OTEL {
+		binary, resolveErr := oteladapter.ResolveBinary()
+		if resolveErr != nil {
+			adapters = append(adapters, Adapter{Name: "otel", Status: "unavailable", Message: resolveErr.Error()})
+			preTargetError = resolveErr
+		} else {
+			ctx := context.Background()
+			otel, err = oteladapter.Start(ctx, binary)
+			if err != nil {
+				adapters = append(adapters, Adapter{Name: "otel", Status: "error", Message: err.Error()})
+				preTargetError = err
+			} else {
+				otelStartSnapshot = "runwitness-" + runID + "-start"
+				otelEndSnapshot = "runwitness-" + runID + "-end"
+				if err := otel.CreateSnapshot(ctx, otelStartSnapshot); err != nil {
+					adapters = append(adapters, Adapter{Name: "otel", Status: "error", Message: err.Error()})
+					preTargetError = fmt.Errorf("create OTEL start snapshot: %w", err)
+				} else {
+					overrides := otel.EnvironmentVars()
+					overrides["RUNWITNESS_RUN_ID"] = runID
+					overrides["OTEL_RESOURCE_ATTRIBUTES"] = withRunResourceAttribute(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"), runID)
+					targetEnvironment = mergeEnvironment(os.Environ(), overrides)
+				}
+			}
+		}
+	}
+
+	if preTargetError != nil {
+		if otel != nil {
+			_ = otel.Close()
+		}
+		if err := errors.Join(stdoutFile.Close(), stderrFile.Close()); err != nil {
+			return "error", fmt.Errorf("close process logs: %w", err)
+		}
+		after, inspectErr := inspectGit(workingDirectory)
+		if inspectErr != nil {
+			return "error", fmt.Errorf("inspect git state after adapter failure: %w", inspectErr)
+		}
+		finished := time.Now().UTC()
+		document := newDocument(options, runID, workingDirectory, started, finished, nil, adapters, 0, "error", preTargetError.Error())
+		applyGitSnapshots(&document.Run, before, after)
+		if err := writeRunDocument(runDirectory, document); err != nil {
+			return "error", err
+		}
+		return "error", preTargetError
+	}
+
 	cmd := exec.Command(target[0], target[1:]...)
 	cmd.Dir = workingDirectory
-	cmd.Env = append(os.Environ(), "RUNWITNESS_RUN_ID="+runID)
+	cmd.Env = targetEnvironment
 	cmd.Stdout = io.MultiWriter(os.Stdout, stdoutFile)
 	cmd.Stderr = io.MultiWriter(os.Stderr, stderrFile)
 
@@ -232,6 +305,9 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 
 	closeErr := errors.Join(stdoutFile.Close(), stderrFile.Close())
 	if closeErr != nil {
+		if otel != nil {
+			_ = otel.Close()
+		}
 		return "error", fmt.Errorf("close process logs: %w", closeErr)
 	}
 
@@ -256,18 +332,64 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 		}
 	}
 
+	evidenceCount := 0
+	var adapterError error
+	if otel != nil {
+		ctx := context.Background()
+		if err := otel.CreateSnapshot(ctx, otelEndSnapshot); err != nil {
+			adapterError = fmt.Errorf("create OTEL end snapshot: %w", err)
+		} else {
+			evidence, collectErr := otel.Collect(ctx, otelStartSnapshot, otelEndSnapshot)
+			if collectErr != nil {
+				adapterError = fmt.Errorf("collect OTEL evidence: %w", collectErr)
+			} else if writeErr := writeEvidenceRecords(evidencePath, runID, evidence); writeErr != nil {
+				adapterError = writeErr
+			} else {
+				evidenceCount = len(evidence)
+				adapters = append(adapters, Adapter{Name: "otel", Status: "ok"})
+			}
+		}
+
+		if closeErr := otel.Close(); closeErr != nil && adapterError == nil {
+			adapterError = fmt.Errorf("close OTEL adapter: %w", closeErr)
+		}
+		if adapterError != nil {
+			adapters = append(adapters, Adapter{Name: "otel", Status: "error", Message: adapterError.Error()})
+			verdictStatus = "error"
+			verdictMessage = adapterError.Error()
+		}
+	}
+
 	after, err := inspectGit(workingDirectory)
 	if err != nil {
 		return "error", fmt.Errorf("inspect git state after execution: %w", err)
 	}
 
 	finished := time.Now().UTC()
+	document := newDocument(options, runID, workingDirectory, started, finished, exitCode, adapters, evidenceCount, verdictStatus, verdictMessage)
+	applyGitSnapshots(&document.Run, before, after)
+
+	if err := writeRunDocument(runDirectory, document); err != nil {
+		return "error", err
+	}
+
+	if adapterError != nil {
+		return "error", adapterError
+	}
+	if internalRunError != nil {
+		return "error", fmt.Errorf("start target command: %w", internalRunError)
+	}
+
+	return verdictStatus, nil
+}
+
+func newDocument(options RunOptions, runID, workingDirectory string, started, finished time.Time, exitCode *int, adapters []Adapter, evidenceCount int, verdictStatus, verdictMessage string) Document {
 	durationMS := finished.Sub(started).Milliseconds()
 	if durationMS < 0 {
 		durationMS = 0
 	}
 
-	document := Document{
+	return Document{
 		SchemaVersion: 1,
 		Run: Run{
 			RunID:            runID,
@@ -279,13 +401,13 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 			RunnerVersion:    Version,
 			WorkingDirectory: workingDirectory,
 			Command: Command{
-				Argv: append([]string(nil), target...),
+				Argv: append([]string(nil), options.Target...),
 			},
 			Process: Process{ExitCode: exitCode},
 		},
-		Adapters: make([]Adapter, 0),
+		Adapters: append([]Adapter(nil), adapters...),
 		Summary: Summary{
-			EvidenceCount: 0,
+			EvidenceCount: evidenceCount,
 			FindingCount:  0,
 		},
 		Findings: make([]Finding, 0),
@@ -295,18 +417,82 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 			Message: verdictMessage,
 		},
 	}
+}
 
-	applyGitSnapshots(&document.Run, before, after)
-
-	if err := writeRunDocument(runDirectory, document); err != nil {
-		return "error", err
+func writeEvidenceRecords(path, runID string, evidence []oteladapter.Evidence) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("open evidence.jsonl: %w", err)
 	}
 
-	if internalRunError != nil {
-		return "error", fmt.Errorf("start target command: %w", internalRunError)
+	encoder := json.NewEncoder(file)
+	for index, item := range evidence {
+		record := EvidenceRecord{
+			SchemaVersion: 1,
+			EvidenceID:    fmt.Sprintf("ev_%s_%06d", strings.ReplaceAll(runID, "-", ""), index+1),
+			RunID:         runID,
+			Source:        "otel",
+			Kind:          item.Kind,
+			ObservedAt:    item.ObservedAt.UTC().Format(time.RFC3339Nano),
+			Attributes:    item.Attributes,
+			Payload:       item.Payload,
+		}
+		if record.Attributes == nil {
+			record.Attributes = make(map[string]any)
+		}
+		if record.Payload == nil {
+			record.Payload = make(map[string]any)
+		}
+		if err := encoder.Encode(record); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("write evidence.jsonl: %w", err)
+		}
 	}
 
-	return verdictStatus, nil
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close evidence.jsonl: %w", err)
+	}
+	return nil
+}
+
+func mergeEnvironment(base []string, overrides map[string]string) []string {
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, replaced := overrides[key]; replaced {
+				continue
+			}
+		}
+		result = append(result, entry)
+	}
+
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result = append(result, key+"="+overrides[key])
+	}
+	return result
+}
+
+func withRunResourceAttribute(current, runID string) string {
+	parts := make([]string, 0)
+	for _, raw := range strings.Split(current, ",") {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			continue
+		}
+		key, _, found := strings.Cut(part, "=")
+		if found && strings.TrimSpace(key) == "runwitness.run_id" {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	parts = append(parts, "runwitness.run_id="+runID)
+	return strings.Join(parts, ",")
 }
 
 func applyGitSnapshots(run *Run, before, after *gitSnapshot) {
