@@ -54,8 +54,8 @@ func Prepare(runDirectory, workingDirectory, currentRubyOpt, currentRubyLib stri
 	overrides := map[string]string{
 		"RUNWITNESS_RAILS_EVENTS_PATH": eventsPath,
 		"RUNWITNESS_WORKING_DIRECTORY": workingDirectory,
-		"RUBYOPT":                     appendRubyOpt(currentRubyOpt, "-rrunwitness_rails_bootstrap"),
-		"RUBYLIB":                     prependRubyLib(currentRubyLib, runDirectory),
+		"RUBYOPT":                      appendRubyOpt(currentRubyOpt, "-rrunwitness_rails_bootstrap"),
+		"RUBYLIB":                      prependRubyLib(currentRubyLib, runDirectory),
 	}
 
 	return &Adapter{
