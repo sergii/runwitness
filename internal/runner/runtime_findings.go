@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	otelSpanErrorRuleID = "otel.span.error"
+	otelSpanErrorRuleID    = "otel.span.error"
 	runtimeNoErrorsRuleID = "runtime.no_errors"
 )
 
