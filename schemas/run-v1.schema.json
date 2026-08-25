@@ -204,6 +204,9 @@
       "properties": {
         "run_id": {
           "$ref": "#/$defs/uuidv7"
+        },
+        "finding_gate_scope": {
+          "enum": ["all", "new"]
         }
       }
     },
