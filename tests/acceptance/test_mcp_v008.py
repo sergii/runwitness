@@ -26,7 +26,11 @@ class MCPClient:
             bufsize=1,
         )
         self.next_id = 1
-        self.initialize()
+        try:
+            self.initialize()
+        except Exception:
+            self.close()
+            raise
 
     def send(self, message):
         if self.process.stdin is None:
@@ -89,6 +93,9 @@ class MCPClient:
         except subprocess.TimeoutExpired:
             self.process.terminate()
             self.process.wait(timeout=3)
+        for stream in (self.process.stdout, self.process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
 
 
 class RunWitnessMCPV008Contract(unittest.TestCase):
