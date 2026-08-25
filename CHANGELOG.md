@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.0.10
+
+Adds the first metric-aware Rails database comparison while keeping database policy descriptive rather than gating.
+
+### Added
+
+- normalized `rails.sql` Evidence from relevant standard `sql.active_record` notifications
+- deterministic `database.query_count` Findings grouped by whitespace-normalized SQL statement
+- stable query-count Finding identity independent of Run-local Evidence IDs and observed count
+- numeric baseline comparison payloads with `baseline`, `current`, `delta`, `delta_percent`, and `unit`
+- metric-aware `regressed`, `improved`, and `unchanged` baseline classification for matched query-count Findings
+- real Rails 8.1 / Ruby 3.4 SQL-notification interoperability coverage
+- deterministic duplicate-notification suppression for the same Rails notification delivery
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.10`
+- query-count Findings become `warning` when regressed and remain `info` when improved or unchanged
+- README documents Rails SQL Evidence and before/after query-count comparison
+- previously reserved `diff.regressed` and `diff.improved` classes now carry defined semantics for Rails query-count Findings
+
+### Preserved
+
+- cached queries, blank SQL, and `SCHEMA` / `TRANSACTION` notification noise are excluded
+- SQL normalization is intentionally whitespace-only in this release
+- query-count regression alone does not create a database gate, change an otherwise passing verdict, or change the CLI exit code
+- `Finding severity != gate action`
+- `Rails.error` observation and `runtime.no_errors` behavior remain compatible
+- existing `new` and `resolved` baseline semantics remain compatible for patterns present on only one side
+- MCP remains local and read-only
+- real upstream `otlp-mcp` interoperability remains a release gate
+
+### Why it matters
+
+v0.0.10 is the first release that can prove a behavioral performance-oriented change even when the target command and tests still pass. A coding agent can compare two Runs and see that a stable SQL query pattern changed from, for example, one execution to three executions without RunWitness pretending that every increase must automatically fail the build.
+
+### Deferred
+
+A database regression gate, configurable thresholds, SQL literal scrubbing or AST normalization, N+1 classification, query-duration regression, allocation or memory regression, PostgreSQL execution-plan analysis, automatic baseline selection, browser correlation, remote Run stores, MCP Run execution, and production correlation remain future contract slices.
+
 ## v0.0.9
 
 Adds exact Finding-to-Evidence dereferencing to the local read-only MCP surface.
