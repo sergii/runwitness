@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -334,13 +335,7 @@ func inspectGit(workingDirectory string) (*gitSnapshot, error) {
 	}
 	head := strings.TrimSpace(headOutput)
 
-	pathspec := []string{
-		".",
-		":(glob,exclude).runwitness",
-		":(glob,exclude).runwitness/**",
-		":(glob,exclude)**/.runwitness",
-		":(glob,exclude)**/.runwitness/**",
-	}
+	pathspec := observedGitPathspec()
 
 	statusArgs := append(
 		[]string{"status", "--porcelain=v1", "--untracked-files=normal", "--"},
@@ -354,16 +349,10 @@ func inspectGit(workingDirectory string) (*gitSnapshot, error) {
 
 	var diffHash *string
 	if dirty {
-		diffArgs := append(
-			[]string{"diff", "--binary", "--no-ext-diff", "HEAD", "--"},
-			pathspec...,
-		)
-		diffOutput, err := gitOutput(root, diffArgs...)
+		value, err := gitStateFingerprint(root, pathspec)
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256([]byte(diffOutput))
-		value := "sha256:" + hex.EncodeToString(sum[:])
 		diffHash = &value
 	}
 
@@ -387,6 +376,120 @@ func inspectGit(workingDirectory string) (*gitSnapshot, error) {
 			DiffHash: diffHash,
 		},
 	}, nil
+}
+
+func observedGitPathspec() []string {
+	return []string{
+		".",
+		":(glob,exclude).runwitness",
+		":(glob,exclude).runwitness/**",
+		":(glob,exclude)**/.runwitness",
+		":(glob,exclude)**/.runwitness/**",
+	}
+}
+
+func gitStateFingerprint(root string, pathspec []string) (string, error) {
+	diffArgs := append(
+		[]string{"diff", "--binary", "--no-ext-diff", "HEAD", "--"},
+		pathspec...,
+	)
+	trackedDiff, err := gitOutput(root, diffArgs...)
+	if err != nil {
+		return "", err
+	}
+
+	untrackedArgs := append(
+		[]string{"ls-files", "--others", "--exclude-standard", "-z", "--"},
+		pathspec...,
+	)
+	untrackedOutput, err := gitOutput(root, untrackedArgs...)
+	if err != nil {
+		return "", err
+	}
+
+	untrackedPaths := strings.Split(untrackedOutput, "\x00")
+	sort.Strings(untrackedPaths)
+
+	hash := sha256.New()
+	if err := writeFingerprintPart(hash, []byte("tracked-diff")); err != nil {
+		return "", err
+	}
+	if err := writeFingerprintPart(hash, []byte(trackedDiff)); err != nil {
+		return "", err
+	}
+
+	for _, relativePath := range untrackedPaths {
+		if relativePath == "" {
+			continue
+		}
+		if err := hashUntrackedPath(hash, root, relativePath); err != nil {
+			return "", err
+		}
+	}
+
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func hashUntrackedPath(writer io.Writer, root, relativePath string) error {
+	fullPath := filepath.Join(root, filepath.FromSlash(relativePath))
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return fmt.Errorf("inspect untracked path %q: %w", relativePath, err)
+	}
+
+	if err := writeFingerprintPart(writer, []byte("untracked")); err != nil {
+		return err
+	}
+	if err := writeFingerprintPart(writer, []byte(relativePath)); err != nil {
+		return err
+	}
+
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		if err := writeFingerprintPart(writer, []byte("symlink")); err != nil {
+			return err
+		}
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return fmt.Errorf("read untracked symlink %q: %w", relativePath, err)
+		}
+		return writeFingerprintPart(writer, []byte(target))
+	case info.Mode().IsRegular():
+		if err := writeFingerprintPart(writer, []byte("regular")); err != nil {
+			return err
+		}
+		if err := binary.Write(writer, binary.BigEndian, uint64(info.Size())); err != nil {
+			return fmt.Errorf("write untracked file size: %w", err)
+		}
+		file, err := os.Open(fullPath)
+		if err != nil {
+			return fmt.Errorf("open untracked file %q: %w", relativePath, err)
+		}
+		_, copyErr := io.Copy(writer, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return fmt.Errorf("hash untracked file %q: %w", relativePath, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close untracked file %q: %w", relativePath, closeErr)
+		}
+		return nil
+	default:
+		if err := writeFingerprintPart(writer, []byte("special")); err != nil {
+			return err
+		}
+		return writeFingerprintPart(writer, []byte(info.Mode().String()))
+	}
+}
+
+func writeFingerprintPart(writer io.Writer, value []byte) error {
+	if err := binary.Write(writer, binary.BigEndian, uint64(len(value))); err != nil {
+		return fmt.Errorf("write fingerprint length: %w", err)
+	}
+	if _, err := writer.Write(value); err != nil {
+		return fmt.Errorf("write fingerprint value: %w", err)
+	}
+	return nil
 }
 
 func gitOutput(directory string, args ...string) (string, error) {
