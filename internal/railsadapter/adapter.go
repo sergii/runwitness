@@ -37,6 +37,10 @@ type event struct {
 	Location     map[string]any `json:"location"`
 	Backtrace    []string       `json:"backtrace"`
 	Context      map[string]any `json:"context"`
+	SQLStatement string         `json:"sql_statement"`
+	SQLName      string         `json:"sql_name"`
+	SQLCached    bool           `json:"sql_cached"`
+	DurationMS   float64        `json:"duration_ms"`
 }
 
 func Prepare(runDirectory, workingDirectory, currentRubyOpt, currentRubyLib string) (*Adapter, map[string]string, error) {
@@ -127,6 +131,31 @@ func (a *Adapter) Collect() ([]Evidence, bool, error) {
 				Attributes: attributes,
 				Payload:    payload,
 			})
+		case "sql":
+			observedAt, err := time.Parse(time.RFC3339Nano, item.ObservedAt)
+			if err != nil {
+				return nil, subscribed, fmt.Errorf("decode Rails SQL timestamp: %w", err)
+			}
+			statement := normalizeSQL(item.SQLStatement)
+			name := strings.TrimSpace(item.SQLName)
+			if item.SQLCached || statement == "" || isIgnoredSQLName(name) {
+				continue
+			}
+			durationMS := item.DurationMS
+			if durationMS < 0 {
+				durationMS = 0
+			}
+			evidence = append(evidence, Evidence{
+				Kind:       "rails.sql",
+				ObservedAt: observedAt.UTC(),
+				Attributes: map[string]any{
+					"sql.statement":   statement,
+					"sql.name":        name,
+					"sql.cached":      false,
+					"sql.duration_ms": durationMS,
+				},
+				Payload: map[string]any{},
+			})
 		default:
 			return nil, subscribed, fmt.Errorf("unsupported Rails event type %q", item.Type)
 		}
@@ -155,6 +184,19 @@ func (a *Adapter) Close() error {
 		return fmt.Errorf("clean Rails adapter files: %w", firstErr)
 	}
 	return nil
+}
+
+func normalizeSQL(statement string) string {
+	return strings.Join(strings.Fields(statement), " ")
+}
+
+func isIgnoredSQLName(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "SCHEMA", "TRANSACTION":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendRubyOpt(current, option string) string {
