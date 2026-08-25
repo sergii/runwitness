@@ -114,6 +114,14 @@ func Main() int {
 		},
 		getRunHandler(workingDirectory),
 	)
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "get_evidence",
+			Description: "Get one canonical normalized Evidence record from a local Run by Run ID and Evidence ID.",
+		},
+		getEvidenceHandler(workingDirectory),
+	)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "runwitness: MCP server: %v\n", err)
