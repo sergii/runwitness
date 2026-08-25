@@ -1,0 +1,1 @@
+Release tags are created only after green main CI and only for Runner version bumps.
