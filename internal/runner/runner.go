@@ -334,7 +334,19 @@ func inspectGit(workingDirectory string) (*gitSnapshot, error) {
 	}
 	head := strings.TrimSpace(headOutput)
 
-	statusOutput, err := gitOutput(root, "status", "--porcelain=v1", "--untracked-files=normal")
+	pathspec := []string{
+		".",
+		":(glob,exclude).runwitness",
+		":(glob,exclude).runwitness/**",
+		":(glob,exclude)**/.runwitness",
+		":(glob,exclude)**/.runwitness/**",
+	}
+
+	statusArgs := append(
+		[]string{"status", "--porcelain=v1", "--untracked-files=normal", "--"},
+		pathspec...,
+	)
+	statusOutput, err := gitOutput(root, statusArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +354,11 @@ func inspectGit(workingDirectory string) (*gitSnapshot, error) {
 
 	var diffHash *string
 	if dirty {
-		diffOutput, err := gitOutput(root, "diff", "--binary", "--no-ext-diff", "HEAD", "--")
+		diffArgs := append(
+			[]string{"diff", "--binary", "--no-ext-diff", "HEAD", "--"},
+			pathspec...,
+		)
+		diffOutput, err := gitOutput(root, diffArgs...)
 		if err != nil {
 			return nil, err
 		}
