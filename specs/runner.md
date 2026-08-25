@@ -51,11 +51,15 @@ Future metadata may include:
 - framework/runtime metadata
 - deployment or production correlation metadata
 
-## 3. Implementation language
+## 3. Reference implementation language
 
-The universal Runner SHOULD be implemented in Go.
+The RunWitness protocol, schemas, adapter contracts, Run model, Evidence model, Finding model, and verdict semantics MUST remain implementation-language independent.
+
+The reference Runner implementation for v0.0.1 SHOULD be written in Go.
 
 The reason is distribution and portability rather than raw performance. The target user experience is one small binary that can coordinate Ruby, Python, Node.js, Go, Java, Elixir, and other application runtimes without requiring the host application language to implement the Runner itself.
+
+Go is an implementation choice for the first reference Runner, not part of the RunWitness protocol. A future Rust, Zig, or other implementation SHOULD be able to pass the same black-box acceptance contract and emit the same versioned artifacts.
 
 Framework-specific intelligence belongs in adapters, not in the universal core.
 
@@ -401,7 +405,33 @@ The CLI and Runner MUST remain fully usable without AI and without MCP.
 
 MCP is a thin machine interface over the same Run model used by CLI and CI integrations.
 
-## 14. Non-goals for v0.0.1
+## 14. Development contract
+
+RunWitness development follows contract-first TDD for externally observable behavior.
+
+Before implementation of a vertical slice begins, its black-box acceptance contract MUST be written and reviewed.
+
+Acceptance tests MUST exercise the public behavior of a RunWitness implementation through its CLI and artifacts rather than importing implementation internals. The same acceptance suite SHOULD be reusable against another conforming implementation, including a future Rust implementation.
+
+During implementation of an accepted vertical slice, its locked acceptance tests MUST NOT be changed merely to make the implementation pass.
+
+If an acceptance contract is discovered to be wrong, the change MUST be explicit and separate:
+
+1. explain why the existing contract is incorrect;
+2. update the specification;
+3. update the acceptance contract;
+4. review that contract change;
+5. only then adapt the implementation.
+
+Internal implementation tests are not contract tests and MAY evolve during refactoring.
+
+The governing rule is:
+
+> No implementation before executable contract. No contract changes to make an implementation pass.
+
+Detailed contribution rules live in `CONTRIBUTING.md`.
+
+## 15. Non-goals for v0.0.1
 
 The first version is not intended to be:
 
@@ -417,7 +447,7 @@ The first version is not intended to be:
 
 RunWitness should compose specialized systems where useful and add the missing execution semantics, correlation, findings, comparison, and verdict layer.
 
-## 15. Initial architecture boundary
+## 16. Initial architecture boundary
 
 ```text
 Application / Tests
@@ -449,11 +479,11 @@ run.json / evidence.jsonl
 Developer or coding agent
 ```
 
-## 16. Locked decisions for v0.0.1
+## 17. Locked decisions for v0.0.1
 
 The following decisions are now part of the v0.0.1 architecture:
 
-1. Universal Runner implementation language: Go.
+1. Reference Runner implementation for v0.0.1: Go; the protocol and acceptance contract remain language-independent.
 2. Primary CLI: `runwitness run -- <command>`.
 3. Run identity: UUIDv7.
 4. Initial Run propagation: `RUNWITNESS_RUN_ID` plus source-specific correlation and OpenTelemetry metadata when available.
@@ -467,8 +497,9 @@ The following decisions are now part of the v0.0.1 architecture:
 12. First framework adapter: Ruby/Rails.
 13. Verdict states: `pass`, `warn`, `fail`, `error`.
 14. MCP is a thin external adapter, not part of Runner core.
+15. External behavior is developed contract-first with locked black-box acceptance tests.
 
-## 17. Deferred questions
+## 18. Deferred questions
 
 The following questions remain deliberately open beyond v0.0.1:
 
