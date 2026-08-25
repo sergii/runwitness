@@ -222,6 +222,70 @@ class RunWitnessV001Contract(unittest.TestCase):
             ).stdout
             self.assertEqual("", status, "RunWitness artifacts must be the only repository-local changes")
 
+    def test_untracked_file_content_changes_git_diff_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cwd = Path(temp)
+            subprocess.run(["git", "init"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "config", "user.email", "contract@example.test"], cwd=cwd, check=True)
+            subprocess.run(["git", "config", "user.name", "RunWitness Contract"], cwd=cwd, check=True)
+
+            tracked = cwd / "tracked.txt"
+            tracked.write_text("committed\n")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=cwd, check=True)
+            subprocess.run(["git", "commit", "-m", "fixture"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            untracked = cwd / "new.txt"
+            untracked.write_text("before\n")
+            code = "from pathlib import Path; Path('new.txt').write_text('after\\n')"
+
+            result = self.run_runner(cwd, [sys.executable, "-c", code])
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            _, document = self.load_single_run(cwd)
+            git = document["run"]["git"]
+
+            self.assertTrue(git["before"]["dirty"])
+            self.assertTrue(git["after"]["dirty"])
+            self.assertIsNotNone(git["before"].get("diff_hash"))
+            self.assertIsNotNone(git["after"].get("diff_hash"))
+            self.assertNotEqual(
+                git["before"]["diff_hash"],
+                git["after"]["diff_hash"],
+                "changing untracked file bytes must change the Git state fingerprint",
+            )
+
+    def test_untracked_file_path_changes_git_diff_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cwd = Path(temp)
+            subprocess.run(["git", "init"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "config", "user.email", "contract@example.test"], cwd=cwd, check=True)
+            subprocess.run(["git", "config", "user.name", "RunWitness Contract"], cwd=cwd, check=True)
+
+            tracked = cwd / "tracked.txt"
+            tracked.write_text("committed\n")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=cwd, check=True)
+            subprocess.run(["git", "commit", "-m", "fixture"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            untracked = cwd / "before-name.txt"
+            untracked.write_text("same-bytes\n")
+            code = "from pathlib import Path; Path('before-name.txt').rename('after-name.txt')"
+
+            result = self.run_runner(cwd, [sys.executable, "-c", code])
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            _, document = self.load_single_run(cwd)
+            git = document["run"]["git"]
+
+            self.assertTrue(git["before"]["dirty"])
+            self.assertTrue(git["after"]["dirty"])
+            self.assertIsNotNone(git["before"].get("diff_hash"))
+            self.assertIsNotNone(git["after"].get("diff_hash"))
+            self.assertNotEqual(
+                git["before"]["diff_hash"],
+                git["after"]["diff_hash"],
+                "renaming an untracked file must change the Git state fingerprint",
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
