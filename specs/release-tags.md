@@ -1,27 +1,19 @@
 # Release Tagging
 
-RunWitness release tags are immutable and are created only after the corresponding `main` CI run succeeds.
+RunWitness release tags are immutable publication boundaries.
 
-The release-tag workflow is triggered by a completed `CI` workflow on `main`. It checks the exact successful commit and compares the Runner version in `internal/runner/runner.go` with the first parent of that commit.
+The automated release-tag workflow MUST:
 
-A tag is created only when that commit changes the Runner semantic version.
+- run only after the `CI` workflow for `main` completes successfully;
+- inspect the exact successful commit reported by that workflow run;
+- compare the Runner semantic version in that commit with its first parent;
+- create a tag only when the Runner version changed;
+- name the tag `v<runner_version>`;
+- point the tag to the exact successful `main` commit;
+- do nothing when the Runner version did not change;
+- never move an existing tag;
+- fail if the expected tag already exists at a different commit.
 
-For example, a successful merge that changes:
+A contract-only merge whose CI is intentionally red MUST NOT create a release tag.
 
-```text
-0.0.4 -> 0.0.5
-```
-
-creates:
-
-```text
-v0.0.5
-```
-
-at the exact successful `main` commit.
-
-A later documentation or CI-only merge that leaves the Runner version at `0.0.5` does not create or move a tag.
-
-If the expected tag already exists at a different commit, automation fails rather than moving the tag.
-
-This keeps release identity tied to a green `main` commit and prevents a red contract-only merge from becoming an installable release.
+For example, a green release merge that changes `0.0.4` to `0.0.5` creates `v0.0.5` at that merge commit. A later documentation-only merge that leaves the Runner at `0.0.5` creates no tag.
