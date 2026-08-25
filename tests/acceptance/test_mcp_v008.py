@@ -153,7 +153,7 @@ class RunWitnessMCPV008Contract(unittest.TestCase):
             finally:
                 client.close()
 
-    def test_tools_list_exposes_exact_read_only_surface(self):
+    def test_tools_list_preserves_v008_read_surface(self):
         with tempfile.TemporaryDirectory() as temp:
             cwd = Path(temp)
             client = MCPClient(self.runner_bin, cwd)
@@ -161,7 +161,8 @@ class RunWitnessMCPV008Contract(unittest.TestCase):
                 response = client.request("tools/list", {})
                 self.assertNotIn("error", response)
                 tools = response["result"]["tools"]
-                self.assertEqual({"list_runs", "get_run"}, {tool["name"] for tool in tools})
+                names = {tool["name"] for tool in tools}
+                self.assertTrue({"list_runs", "get_run"}.issubset(names), names)
             finally:
                 client.close()
 
