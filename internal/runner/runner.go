@@ -333,6 +333,8 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 	}
 
 	evidenceCount := 0
+	findings := make([]Finding, 0)
+	gates := make([]Gate, 0)
 	var adapterError error
 	if otel != nil {
 		ctx := context.Background()
@@ -346,6 +348,10 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 				adapterError = writeErr
 			} else {
 				evidenceCount = len(evidence)
+				findings, gates = deriveRuntimeFindings(runID, evidence)
+				if len(findings) > 0 && verdictStatus != "error" {
+					verdictStatus = "fail"
+				}
 				adapters = append(adapters, Adapter{Name: "otel", Status: "ok"})
 			}
 		}
@@ -367,6 +373,9 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 
 	finished := time.Now().UTC()
 	document := newDocument(options, runID, workingDirectory, started, finished, exitCode, adapters, evidenceCount, verdictStatus, verdictMessage)
+	document.Findings = findings
+	document.Summary.FindingCount = len(findings)
+	document.Verdict.Gates = gates
 	applyGitSnapshots(&document.Run, before, after)
 
 	if err := writeRunDocument(runDirectory, document); err != nil {
@@ -429,7 +438,7 @@ func writeEvidenceRecords(path, runID string, evidence []oteladapter.Evidence) e
 	for index, item := range evidence {
 		record := EvidenceRecord{
 			SchemaVersion: 1,
-			EvidenceID:    fmt.Sprintf("ev_%s_%06d", strings.ReplaceAll(runID, "-", ""), index+1),
+			EvidenceID:    evidenceRecordID(runID, index),
 			RunID:         runID,
 			Source:        "otel",
 			Kind:          item.Kind,
