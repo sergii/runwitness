@@ -53,7 +53,9 @@ For each externally visible vertical slice:
 6. Add or refactor internal tests as needed.
 7. Merge only when the implementation satisfies the accepted contract.
 
-A contract PR may be stacked ahead of its implementation PR when the contract cannot be green without a Runner binary. In that case, the contract must still be reviewed and frozen before implementation work starts, and the PRs should land in contract-then-implementation order.
+A contract PR may be stacked ahead of its implementation PR when the contract cannot be green against the current Runner. In that case, the contract must still be reviewed and frozen before implementation work starts, and the PRs should land in contract-then-implementation order.
+
+Dedicated contract changes MUST use a `contract/` branch. CI permits acceptance-test changes on those branches and continues to execute the full contract so the intended red state is visible before implementation. Non-contract PRs are rejected if they modify `tests/acceptance`.
 
 ## Changing an accepted contract
 
