@@ -1,6 +1,6 @@
 # RunWitness MCP Evidence Read Surface v0.0.9
 
-Status: Contract candidate
+Status: Stable
 
 ## Purpose
 
@@ -25,7 +25,7 @@ This is a read-path extension only. It does not give MCP execution authority and
 
 ## Tool surface evolution
 
-The public RunWitness MCP tool surface becomes exactly:
+The public RunWitness MCP tool surface is exactly:
 
 ```text
 list_runs
@@ -85,7 +85,7 @@ The MCP adapter MUST NOT reinterpret, summarize, enrich, or omit fields from the
 
 ## Evidence-store integrity boundary
 
-`evidence.jsonl` is treated as canonical Run-local Evidence data. `get_evidence` MUST report a tool error when:
+`evidence.jsonl` is treated as canonical Run-local Evidence data. `get_evidence` reports a tool error when:
 
 - the requested Run does not exist or is malformed;
 - `evidence.jsonl` is missing when a requested Evidence record is being resolved;
@@ -114,7 +114,7 @@ The MCP server remains local stdio only.
 
 ## Version boundary
 
-This feature contract does not itself advance the stable release version. The implementation remains on the current stable version until a separate v0.0.9 release contract is merged.
+This feature is part of the stable v0.0.9 release surface.
 
 ## Explicitly deferred
 
@@ -134,7 +134,7 @@ v0.0.9 does not add:
 
 ## Acceptance boundary
 
-The locked black-box contract MUST prove:
+The locked black-box contract proves:
 
 1. `tools/list` exposes exactly `list_runs`, `get_run`, and `get_evidence`;
 2. existing `list_runs` and `get_run` behavior remains compatible;
@@ -146,4 +146,4 @@ The locked black-box contract MUST prove:
 8. duplicate Evidence IDs are a tool error rather than an arbitrary first/last match;
 9. Evidence errors do not terminate the MCP server;
 10. MCP Evidence reads do not mutate the local Run store;
-11. all unrelated pre-v0.0.9 contracts remain unchanged during implementation.
+11. all unrelated pre-v0.0.9 contracts remain compatible.
