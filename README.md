@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.10
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.11
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.10
+# RunWitness v0.0.11
 ```
 
 ## Run commands
@@ -53,13 +53,13 @@ Each Run is stored under:
 
 ## MCP for coding agents
 
-RunWitness exposes the canonical local Run store and exact normalized Evidence records to coding agents through a read-only MCP stdio server:
+RunWitness exposes the canonical local Run store and exact normalized Evidence records through a read-only MCP stdio server:
 
 ```bash
 runwitness mcp
 ```
 
-The public RunWitness MCP tool surface contains exactly:
+The public MCP tool surface contains exactly:
 
 ```text
 list_runs
@@ -69,7 +69,7 @@ get_evidence
 
 `list_runs` returns deterministic newest-first Run summaries. `get_run` returns the exact canonical decoded `run.json` document for a UUIDv7 Run ID. `get_evidence` accepts a Run ID plus an Evidence ID and returns the exact decoded normalized Evidence record from that Run's `evidence.jsonl`.
 
-Successful calls expose machine-readable `structuredContent`, so an agent does not need to scrape terminal prose. A coding agent can follow the semantic chain directly:
+Successful calls expose machine-readable `structuredContent`, so an agent does not need to scrape terminal prose:
 
 ```text
 get_run
@@ -86,7 +86,7 @@ exact normalized Evidence
 
 The CLI, CI, and MCP adapter use the same canonical Run and Evidence models. The MCP surface is deliberately local and read-only. It does not create Runs, execute target commands, bind a network listener, expose arbitrary filesystem reads, follow Run-store symlink escapes, or mutate Run artifacts.
 
-The server reads Runs only from the working directory's local store:
+The server reads Runs only from:
 
 ```text
 <cwd>/.runwitness/runs/
@@ -112,7 +112,7 @@ resolved  = present only in baseline
 unchanged = same stable Finding present on both sides with no metric change
 ```
 
-Metric-aware Findings can additionally be classified as `regressed` or `improved`. v0.0.10 uses this for Rails SQL query counts.
+Metric-aware Findings can additionally be classified as `regressed` or `improved`. Rails SQL query counts use these classes.
 
 The current `run.json` records the selected baseline and deterministic diff:
 
@@ -191,7 +191,7 @@ RunWitness preserves the target process exit code. The quality gate changes the 
 
 ### ActiveRecord SQL query counts
 
-v0.0.10 also observes standard `sql.active_record` notifications when `--rails` is enabled. Relevant notifications become normalized `rails.sql` Evidence.
+When `--rails` is enabled, relevant standard `sql.active_record` notifications become normalized `rails.sql` Evidence.
 
 RunWitness normalizes SQL whitespace, ignores cached queries, blank SQL, and `SCHEMA` / `TRANSACTION` notification noise, then groups identical normalized statements into deterministic Findings:
 
@@ -228,13 +228,38 @@ database.query_count
        regressed
 ```
 
-A query-count regression becomes a warning Finding, but **v0.0.10 deliberately does not add a database quality gate**. Query-count regression by itself therefore does not change an otherwise passing verdict or CLI exit code.
+By default this remains descriptive: a query-count regression becomes a warning Finding but does not add a database gate or change an otherwise passing verdict.
 
 This preserves the policy boundary:
 
 ```text
 Finding severity != gate action
 ```
+
+### Fail on query-count regressions
+
+v0.0.11 adds an explicit opt-in policy:
+
+```bash
+runwitness run \
+  --rails \
+  --baseline <run_id> \
+  --fail-on-query-regression \
+  -- bundle exec rspec
+```
+
+The flag requires an explicit baseline. When requested, RunWitness evaluates the finalized comparison state and adds:
+
+```text
+rule_id = database.no_query_count_regressions
+action  = fail
+```
+
+Eligible `database.query_count` Findings in `diff.regressed` trigger the gate. The target process exit code is preserved, while the RunWitness verdict becomes `fail` and the CLI exits `1`.
+
+If query counts are unchanged or improved, the requested gate remains visible with outcome `passed`.
+
+This comparison gate is deliberately independent of `--gate-scope new`. A stable Finding that exists in both Runs but regresses numerically is still eligible even though it is not a new Finding.
 
 The release gate executes Rails error and SQL observation against real Rails 8.1 on Ruby 3.4.
 
@@ -294,7 +319,7 @@ runtime.no_errors gate
 verdict fail
 ```
 
-Rails handled errors feed the same gate. Rails SQL query-count Findings do not feed this gate.
+Rails handled errors feed the same gate. Rails SQL query-count Findings remain descriptive unless `--fail-on-query-regression` is explicitly selected.
 
 This keeps process status, observed facts, semantic Findings, and policy separate. A target can exit successfully while runtime evidence proves that a configured quality gate should fail, while descriptive warning Findings can remain non-gating.
 
@@ -304,7 +329,7 @@ Finding identity is stable across independent Runs.
 
 The same logical problem or metric produces the same `finding_id` even when Run IDs, Evidence IDs, timestamps, and observed query counts differ. Run-local Evidence references remain separate.
 
-Stable identity drives baseline classification and baseline-aware gate scoping.
+Stable identity drives baseline classification and baseline-aware gate policy.
 
 ## Git state
 
@@ -316,7 +341,7 @@ The fingerprint covers tracked changes plus untracked, non-ignored files. RunWit
 
 ```text
 0 = pass or warn
-1 = target/application or runtime quality-gate failure
+1 = target/application or quality-gate failure
 2 = RunWitness/usage/instrumentation error
 ```
 
@@ -332,7 +357,7 @@ Black-box acceptance tests are written and reviewed first. During implementation
 
 ## Current scope
 
-v0.0.10 includes:
+v0.0.11 includes:
 
 - universal Runner core;
 - Git and process evidence;
@@ -347,10 +372,11 @@ v0.0.10 includes:
 - deterministic `new`, `resolved`, `unchanged`, `regressed`, and `improved` Finding comparison where metric semantics are defined;
 - query-count comparison payloads with baseline/current/delta/delta-percent values;
 - explicit baseline-aware Finding gate scope through `--gate-scope all|new`;
+- opt-in query regression fail gate through `--fail-on-query-regression`;
 - local read-only MCP stdio access through `list_runs`, `get_run`, and `get_evidence`;
 - exact Finding-to-Evidence dereferencing through stable `evidence_refs`;
 - real upstream OTEL and real Rails interoperability gates.
 
-Still deliberately deferred are a database regression gate, configurable query thresholds, SQL literal scrubbing or AST normalization, N+1 classification, query-duration regression, allocation/memory regression, PostgreSQL execution-plan analysis, MCP Run execution, Evidence listing/search/pagination through MCP, stdout/stderr retrieval through MCP, automatic baseline selection, browser evidence, remote Run stores, MCP resources/prompts, and local-to-production correlation.
+Still deliberately deferred are configurable query thresholds, percentage/absolute tolerances, SQL literal scrubbing or AST normalization, N+1 classification, query-duration regression, allocation/memory regression, PostgreSQL execution-plan analysis, MCP Run execution, Evidence listing/search/pagination through MCP, stdout/stderr retrieval through MCP, automatic baseline selection, browser evidence, remote Run stores, MCP resources/prompts, and local-to-production correlation.
 
-Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, normalized Evidence uses `schemas/evidence-v1.schema.json`, the MCP Run read contract is `specs/mcp-v0.0.8.md`, the MCP Evidence read contract is `specs/mcp-evidence-v0.0.9.md`, and the v0.0.10 release boundary is `specs/v0.0.10.md`.
+Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, normalized Evidence uses `schemas/evidence-v1.schema.json`, the MCP Run read contract is `specs/mcp-v0.0.8.md`, the MCP Evidence read contract is `specs/mcp-evidence-v0.0.9.md`, and the v0.0.11 release boundary is `specs/v0.0.11.md`.
