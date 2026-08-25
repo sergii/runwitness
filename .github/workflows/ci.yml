@@ -113,3 +113,84 @@ jobs:
           assert adapters[0]["status"] == "ok", document
           assert (runs[0] / "evidence.jsonl").read_text() == ""
           PY
+
+  rails-integration:
+    runs-on: ubuntu-24.04
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
+      - name: Install Rails 8.1
+        run: gem install rails -v 8.1.3.1 --no-document
+
+      - name: Build RunWitness
+        run: |
+          mkdir -p bin
+          go build -o bin/runwitness ./cmd/runwitness
+
+      - name: Smoke real Rails.error interoperability
+        run: |
+          set -euo pipefail
+          smoke_dir="$(mktemp -d)"
+          export SMOKE_DIR="$smoke_dir"
+
+          set +e
+          (
+            cd "$smoke_dir"
+            "$GITHUB_WORKSPACE/bin/runwitness" run --rails -- ruby "$GITHUB_WORKSPACE/tests/integration/rails_error_smoke.rb"
+          )
+          status=$?
+          set -e
+
+          test "$status" -eq 1
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = list((Path(os.environ["SMOKE_DIR"]) / ".runwitness" / "runs").iterdir())
+          assert len(runs) == 1, runs
+
+          document = json.loads((runs[0] / "run.json").read_text())
+          evidence = [json.loads(line) for line in (runs[0] / "evidence.jsonl").read_text().splitlines() if line]
+
+          assert document["verdict"]["status"] == "fail", document
+          assert document["run"]["process"]["exit_code"] == 0, document
+          assert document["summary"]["evidence_count"] == 1, document
+          assert document["summary"]["finding_count"] == 1, document
+
+          rails = [adapter for adapter in document["adapters"] if adapter["name"] == "rails"]
+          assert len(rails) == 1, document
+          assert rails[0]["status"] == "ok", document
+
+          assert len(evidence) == 1, evidence
+          assert evidence[0]["source"] == "rails", evidence
+          assert evidence[0]["kind"] == "rails.error", evidence
+          assert evidence[0]["attributes"]["error.class"] == "RuntimeError", evidence
+          assert evidence[0]["attributes"]["error.handled"] is True, evidence
+          assert evidence[0]["attributes"]["error.source"] == "application", evidence
+
+          finding = document["findings"][0]
+          assert finding["kind"] == "runtime.handled_error", finding
+          assert finding["severity"] == "warning", finding
+          assert finding["sources"] == ["rails"], finding
+          assert finding["evidence_refs"] == [evidence[0]["evidence_id"]], finding
+
+          gate = next(gate for gate in document["verdict"]["gates"] if gate["rule_id"] == "runtime.no_errors")
+          assert gate["action"] == "fail", gate
+          assert gate["outcome"] == "triggered", gate
+          assert finding["finding_id"] in gate["finding_ids"], gate
+          PY
