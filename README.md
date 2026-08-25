@@ -2,7 +2,7 @@
 
 RunWitness is a local execution witness for developers, CI systems, and coding agents.
 
-It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, versioned runtime Evidence, semantic Findings, and deterministic quality gates.
+It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, versioned runtime Evidence, semantic Findings, deterministic quality gates, and explicit Run-to-Run Finding diffs.
 
 The core question is:
 
@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.5
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.6
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.5
+# RunWitness v0.0.6
 ```
 
 ## Run commands
@@ -53,9 +53,52 @@ Each Run is stored under:
 
 `run_id` is UUIDv7 and is propagated to the target process as `RUNWITNESS_RUN_ID`.
 
+## Compare with a baseline Run
+
+v0.0.6 adds explicit local Run-to-Run comparison:
+
+```bash
+runwitness run --baseline <run_id> -- bundle exec rspec
+```
+
+RunWitness resolves the selected baseline from the current local Run store, executes and observes the current command, then compares the finalized semantic Finding sets by stable `finding_id`.
+
+The current `run.json` records the selected baseline and a deterministic diff:
+
+```json
+{
+  "baseline": {
+    "run_id": "0198f5f0-0000-7000-8000-000000000001"
+  },
+  "diff": {
+    "new": ["rwf_..."],
+    "resolved": ["rwf_..."],
+    "unchanged": ["rwf_..."],
+    "regressed": [],
+    "improved": []
+  }
+}
+```
+
+The v0.0.6 classification is deliberately identity-based:
+
+```text
+new       = current - baseline
+resolved  = baseline - current
+unchanged = current ∩ baseline
+```
+
+Lists are unique and lexicographically sorted. `regressed` and `improved` are reserved for a later metric-aware comparison contract and remain empty in v0.0.6.
+
+Baseline comparison is descriptive. Existing current-run gates remain absolute, so an unchanged current runtime error still fails `runtime.no_errors`. A resolved baseline error does not trigger a current gate when the current Run no longer contains that Finding.
+
+Baseline selection is explicit and local only. If the requested baseline is missing, unreadable, malformed, or does not match its requested Run ID, RunWitness exits `2` before executing the target and before creating a new Run.
+
+If current observation ends with verdict `error`, RunWitness does not claim Findings were resolved. The selected baseline may be recorded, but `diff` is omitted.
+
 ## Rails runtime evidence
 
-v0.0.5 adds explicit Rails runtime observation:
+RunWitness supports explicit Rails runtime observation:
 
 ```bash
 runwitness run --rails -- bundle exec rspec
@@ -145,7 +188,7 @@ runtime.no_errors gate
 verdict fail
 ```
 
-The Rails rule introduced in v0.0.5 feeds the same gate:
+The Rails rule feeds the same gate:
 
 ```text
 Rails.error handled=true
@@ -167,15 +210,7 @@ Finding identity is stable across independent Runs.
 
 The same logical problem produces the same `finding_id` even when Run IDs, Evidence IDs, trace/span IDs, and timestamps differ. Run-local Evidence references remain separate.
 
-This invariant is the foundation for future Run comparison semantics:
-
-```text
-new
-unchanged
-resolved
-regressed
-improved
-```
+v0.0.6 uses that invariant directly to classify logical Findings as `new`, `resolved`, or `unchanged` across an explicitly selected baseline and current Run.
 
 ## Git state
 
@@ -216,7 +251,7 @@ Black-box acceptance tests are written and reviewed first. During implementation
 
 ## Current scope
 
-v0.0.5 includes:
+v0.0.6 includes:
 
 - universal Runner core;
 - Git and process evidence;
@@ -225,8 +260,10 @@ v0.0.5 includes:
 - `runtime.error` and `runtime.handled_error` Findings;
 - deterministic Finding identity;
 - the built-in `runtime.no_errors` quality gate;
+- explicit local baseline selection through `--baseline <run_id>`;
+- deterministic `new`, `resolved`, and `unchanged` Finding comparison;
 - real upstream OTEL and real Rails interoperability gates.
 
-Still deliberately deferred are baseline Run comparison, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, a public RunWitness MCP interface, and local-to-production correlation.
+Still deliberately deferred are automatic baseline selection, metric-aware `regressed`/`improved` comparison, baseline-aware gate policy, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, a public RunWitness MCP interface, and local-to-production correlation.
 
 Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, and normalized Evidence uses `schemas/evidence-v1.schema.json`.
