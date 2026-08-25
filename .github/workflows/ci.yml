@@ -31,13 +31,7 @@ jobs:
         run: git diff --exit-code "${{ github.event.pull_request.base.sha }}" HEAD -- tests/acceptance
 
       - name: Verify Go formatting
-        run: |
-          files="$(gofmt -l .)"
-          if [[ -n "$files" ]]; then
-            printf '%s\n' "$files"
-            gofmt -d internal/railsadapter/adapter.go || true
-            exit 1
-          fi
+        run: test -z "$(gofmt -l .)"
 
       - name: Run go vet
         run: go vet ./...
