@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/sergii/runwitness/internal/railsintegration"
+	"github.com/sergii/runwitness/internal/railsqueryintegration"
 )
 
 var uuidv7Pattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
@@ -30,7 +30,7 @@ func Main(args []string) int {
 		return 2
 	}
 	if !requested {
-		return railsintegration.Main(args)
+		return railsqueryintegration.Main(args)
 	}
 	if !uuidv7Pattern.MatchString(baselineID) {
 		fmt.Fprintf(os.Stderr, "runwitness: baseline run ID %q is not a UUIDv7\n", baselineID)
@@ -60,7 +60,7 @@ func Main(args []string) int {
 		return 2
 	}
 
-	resultExit := railsintegration.Main(stripped)
+	resultExit := railsqueryintegration.Main(stripped)
 
 	runDirectory, found, err := newRunDirectory(workingDirectory, beforeRuns)
 	if err != nil {
@@ -160,16 +160,10 @@ func applyBaseline(runDirectory, baselineID string, baseline map[string]any) err
 		return writeRunDocument(runDirectory, current)
 	}
 
-	baselineIDs, err := findingIDs(baseline)
+	diff, err := classifyFindings(baseline, current)
 	if err != nil {
-		return fmt.Errorf("read baseline Findings: %w", err)
+		return err
 	}
-	currentIDs, err := findingIDs(current)
-	if err != nil {
-		return fmt.Errorf("read current Findings: %w", err)
-	}
-
-	diff := classifyFindingIDs(baselineIDs, currentIDs)
 	current["diff"] = map[string]any{
 		"new":       diff.New,
 		"resolved":  diff.Resolved,
@@ -178,6 +172,153 @@ func applyBaseline(runDirectory, baselineID string, baseline map[string]any) err
 		"improved":  diff.Improved,
 	}
 	return writeRunDocument(runDirectory, current)
+}
+
+func classifyFindings(baselineDocument, currentDocument map[string]any) (findingDiff, error) {
+	baseline, err := findingsByID(baselineDocument)
+	if err != nil {
+		return findingDiff{}, fmt.Errorf("read baseline Findings: %w", err)
+	}
+	current, err := findingsByID(currentDocument)
+	if err != nil {
+		return findingDiff{}, fmt.Errorf("read current Findings: %w", err)
+	}
+
+	diff := findingDiff{
+		New:       make([]string, 0),
+		Resolved:  make([]string, 0),
+		Unchanged: make([]string, 0),
+		Regressed: make([]string, 0),
+		Improved:  make([]string, 0),
+	}
+
+	for findingID, currentFinding := range current {
+		baselineFinding, existed := baseline[findingID]
+		if !existed {
+			diff.New = append(diff.New, findingID)
+			continue
+		}
+
+		if isQueryCountFinding(baselineFinding) && isQueryCountFinding(currentFinding) {
+			baselineCount, err := evidenceReferenceCount(baselineFinding)
+			if err != nil {
+				return findingDiff{}, fmt.Errorf("baseline query-count Finding %s: %w", findingID, err)
+			}
+			currentCount, err := evidenceReferenceCount(currentFinding)
+			if err != nil {
+				return findingDiff{}, fmt.Errorf("current query-count Finding %s: %w", findingID, err)
+			}
+			if baselineCount <= 0 || currentCount <= 0 {
+				return findingDiff{}, fmt.Errorf("query-count Finding %s must have at least one Evidence reference", findingID)
+			}
+
+			delta := currentCount - baselineCount
+			deltaPercent := (float64(delta) / float64(baselineCount)) * 100.0
+			currentFinding["comparison"] = map[string]any{
+				"baseline":      baselineCount,
+				"current":       currentCount,
+				"delta":         delta,
+				"delta_percent": deltaPercent,
+				"unit":          "queries",
+			}
+
+			switch {
+			case currentCount > baselineCount:
+				currentFinding["severity"] = "warning"
+				diff.Regressed = append(diff.Regressed, findingID)
+			case currentCount < baselineCount:
+				currentFinding["severity"] = "info"
+				diff.Improved = append(diff.Improved, findingID)
+			default:
+				currentFinding["severity"] = "info"
+				diff.Unchanged = append(diff.Unchanged, findingID)
+			}
+			continue
+		}
+
+		diff.Unchanged = append(diff.Unchanged, findingID)
+	}
+
+	for findingID := range baseline {
+		if _, stillPresent := current[findingID]; !stillPresent {
+			diff.Resolved = append(diff.Resolved, findingID)
+		}
+	}
+
+	sort.Strings(diff.New)
+	sort.Strings(diff.Resolved)
+	sort.Strings(diff.Unchanged)
+	sort.Strings(diff.Regressed)
+	sort.Strings(diff.Improved)
+	return diff, nil
+}
+
+func isQueryCountFinding(finding map[string]any) bool {
+	kind, _ := finding["kind"].(string)
+	ruleID, _ := finding["rule_id"].(string)
+	return kind == "database.query_count" && ruleID == "rails.sql.query_count"
+}
+
+func evidenceReferenceCount(finding map[string]any) (int, error) {
+	raw, ok := finding["evidence_refs"]
+	if !ok {
+		return 0, errors.New("Finding has no evidence_refs")
+	}
+	if typed, ok := raw.([]string); ok {
+		return len(typed), nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return 0, errors.New("Finding evidence_refs is not an array")
+	}
+	for _, item := range items {
+		if _, ok := item.(string); !ok {
+			return 0, errors.New("Finding evidence_refs contains a non-string value")
+		}
+	}
+	return len(items), nil
+}
+
+func findingsByID(document map[string]any) (map[string]map[string]any, error) {
+	raw, ok := document["findings"]
+	if !ok {
+		return nil, errors.New("run.json has no Findings array")
+	}
+
+	result := make(map[string]map[string]any)
+	if typed, ok := raw.([]map[string]any); ok {
+		for _, finding := range typed {
+			findingID, _ := finding["finding_id"].(string)
+			if findingID == "" {
+				return nil, errors.New("run.json contains a Finding without finding_id")
+			}
+			if _, duplicate := result[findingID]; duplicate {
+				return nil, fmt.Errorf("run.json contains duplicate finding_id %q", findingID)
+			}
+			result[findingID] = finding
+		}
+		return result, nil
+	}
+
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New("run.json Findings is not an array")
+	}
+	for _, item := range items {
+		finding, ok := item.(map[string]any)
+		if !ok {
+			return nil, errors.New("run.json contains a non-object Finding")
+		}
+		findingID, _ := finding["finding_id"].(string)
+		if findingID == "" {
+			return nil, errors.New("run.json contains a Finding without finding_id")
+		}
+		if _, duplicate := result[findingID]; duplicate {
+			return nil, fmt.Errorf("run.json contains duplicate finding_id %q", findingID)
+		}
+		result[findingID] = finding
+	}
+	return result, nil
 }
 
 func classifyFindingIDs(baselineIDs, currentIDs []string) findingDiff {
@@ -212,32 +353,12 @@ func classifyFindingIDs(baselineIDs, currentIDs []string) findingDiff {
 }
 
 func findingIDs(document map[string]any) ([]string, error) {
-	raw, ok := document["findings"]
-	if !ok {
-		return nil, errors.New("run.json has no Findings array")
+	findings, err := findingsByID(document)
+	if err != nil {
+		return nil, err
 	}
-	items, ok := raw.([]any)
-	if !ok {
-		if typed, typedOK := raw.([]map[string]any); typedOK {
-			items = make([]any, len(typed))
-			for index := range typed {
-				items[index] = typed[index]
-			}
-		} else {
-			return nil, errors.New("run.json Findings is not an array")
-		}
-	}
-
-	ids := make([]string, 0, len(items))
-	for _, item := range items {
-		finding, ok := item.(map[string]any)
-		if !ok {
-			return nil, errors.New("run.json contains a non-object Finding")
-		}
-		findingID, _ := finding["finding_id"].(string)
-		if findingID == "" {
-			return nil, errors.New("run.json contains a Finding without finding_id")
-		}
+	ids := make([]string, 0, len(findings))
+	for findingID := range findings {
 		ids = append(ids, findingID)
 	}
 	return ids, nil

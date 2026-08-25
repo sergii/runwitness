@@ -59,6 +59,32 @@ module RunWitnessRailsAdapter
     {}
   end
 
+  def normalize_sql(statement)
+    statement.to_s.strip.gsub(/\s+/, " ")
+  rescue Exception
+    ""
+  end
+
+  def precise_time_token(value)
+    return value.to_r.to_s if value.respond_to?(:to_r)
+
+    value.to_s
+  rescue Exception
+    value.to_s
+  end
+
+  def sql_event_key(event_id, started, finished, statement, query_name)
+    [
+      event_id.to_s,
+      precise_time_token(started),
+      precise_time_token(finished),
+      statement,
+      query_name,
+    ].join("\0")
+  rescue Exception
+    ""
+  end
+
   class Subscriber
     def report(error, handled:, severity:, context:, source: "application")
       location = RunWitnessRailsAdapter.normalized_location(error)
@@ -80,20 +106,81 @@ module RunWitnessRailsAdapter
     end
   end
 
-  def install!
-    return true if @installed
+  def install_error!
+    return true if @error_installed
+    return false if @error_installing
     return false unless defined?(Rails) && Rails.respond_to?(:error)
 
     reporter = Rails.error
     return false unless reporter && reporter.respond_to?(:subscribe)
 
+    @error_installing = true
     reporter.subscribe(Subscriber.new)
-    @installed = true
+    @error_installed = true
     write_event(
       "type" => "subscribed",
       "observed_at" => Time.now.utc.iso8601(9),
     )
     true
+  rescue Exception
+    false
+  ensure
+    @error_installing = false
+  end
+
+  def install_sql!
+    return true if @sql_installed
+    return false if @sql_installing
+    return false unless defined?(ActiveSupport::Notifications)
+    return false unless ActiveSupport::Notifications.respond_to?(:subscribe)
+
+    @sql_installing = true
+    ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, started, finished, event_id, payload|
+      begin
+        payload ||= {}
+        cached = !!payload[:cached]
+        statement = normalize_sql(payload[:sql])
+        query_name = payload[:name].to_s
+        ignored_name = ["SCHEMA", "TRANSACTION"].include?(query_name.upcase)
+        next if cached || statement.empty? || ignored_name
+
+        duration_ms = begin
+          value = (finished - started).to_f * 1000.0
+          value.negative? ? 0.0 : value
+        rescue Exception
+          0.0
+        end
+        observed_at = begin
+          finished.utc.iso8601(9)
+        rescue Exception
+          Time.now.utc.iso8601(9)
+        end
+
+        write_event(
+          "type" => "sql",
+          "observed_at" => observed_at,
+          "sql_event_key" => sql_event_key(event_id, started, finished, statement, query_name),
+          "sql_statement" => statement,
+          "sql_name" => query_name,
+          "sql_cached" => false,
+          "duration_ms" => duration_ms,
+        )
+      rescue Exception
+        nil
+      end
+    end
+    @sql_installed = true
+    true
+  rescue Exception
+    false
+  ensure
+    @sql_installing = false
+  end
+
+  def install!
+    error_installed = install_error!
+    install_sql!
+    error_installed
   rescue Exception
     false
   end

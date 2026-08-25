@@ -194,3 +194,51 @@ jobs:
           assert gate["outcome"] == "triggered", gate
           assert finding["finding_id"] in gate["finding_ids"], gate
           PY
+
+      - name: Smoke real ActiveRecord SQL notification interoperability
+        run: |
+          set -euo pipefail
+          smoke_dir="$(mktemp -d)"
+          export SMOKE_DIR="$smoke_dir"
+
+          (
+            cd "$smoke_dir"
+            "$GITHUB_WORKSPACE/bin/runwitness" run --rails -- ruby "$GITHUB_WORKSPACE/tests/integration/rails_sql_smoke.rb"
+          )
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = list((Path(os.environ["SMOKE_DIR"]) / ".runwitness" / "runs").iterdir())
+          assert len(runs) == 1, runs
+
+          document = json.loads((runs[0] / "run.json").read_text())
+          evidence = [json.loads(line) for line in (runs[0] / "evidence.jsonl").read_text().splitlines() if line]
+
+          assert document["verdict"]["status"] == "pass", document
+          assert document["run"]["process"]["exit_code"] == 0, document
+          assert document["summary"]["evidence_count"] == 2, document
+          assert document["summary"]["finding_count"] == 1, document
+
+          rails = [adapter for adapter in document["adapters"] if adapter["name"] == "rails"]
+          assert len(rails) == 1, document
+          assert rails[0]["status"] == "ok", document
+
+          assert len(evidence) == 2, evidence
+          assert all(item["source"] == "rails" for item in evidence), evidence
+          assert all(item["kind"] == "rails.sql" for item in evidence), evidence
+          assert all(item["attributes"]["sql.statement"] == "SELECT * FROM orders WHERE id = $1" for item in evidence), evidence
+          assert all(item["attributes"]["sql.cached"] is False for item in evidence), evidence
+          assert all(item["attributes"]["sql.duration_ms"] >= 0 for item in evidence), evidence
+
+          finding = document["findings"][0]
+          assert finding["kind"] == "database.query_count", finding
+          assert finding["rule_id"] == "rails.sql.query_count", finding
+          assert finding["severity"] == "info", finding
+          assert finding["sources"] == ["rails"], finding
+          assert finding["evidence_refs"] == [item["evidence_id"] for item in evidence], finding
+          assert "comparison" not in finding, finding
+          assert not any(gate["rule_id"].startswith("database.") for gate in document["verdict"]["gates"]), document
+          PY
