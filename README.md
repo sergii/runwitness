@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.8
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.9
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.8
+# RunWitness v0.0.9
 ```
 
 ## Run commands
@@ -53,22 +53,38 @@ Each Run is stored under:
 
 ## MCP for coding agents
 
-v0.0.8 exposes the canonical local Run store to coding agents through a read-only MCP stdio server:
+v0.0.9 exposes the canonical local Run store and exact normalized Evidence records to coding agents through a read-only MCP stdio server:
 
 ```bash
 runwitness mcp
 ```
 
-The first public RunWitness MCP tool surface contains exactly:
+The public RunWitness MCP tool surface contains exactly:
 
 ```text
 list_runs
 get_run
+get_evidence
 ```
 
-`list_runs` returns deterministic newest-first Run summaries. `get_run` returns the exact canonical decoded `run.json` document for a UUIDv7 Run ID. Successful calls expose machine-readable `structuredContent`, so an agent does not need to scrape terminal prose.
+`list_runs` returns deterministic newest-first Run summaries. `get_run` returns the exact canonical decoded `run.json` document for a UUIDv7 Run ID. `get_evidence` accepts a Run ID plus an Evidence ID and returns the exact decoded normalized Evidence record from that Run's `evidence.jsonl`.
 
-The important invariant is that the CLI, CI, and MCP adapter all use the same Run model:
+Successful calls expose machine-readable `structuredContent`, so an agent does not need to scrape terminal prose. A coding agent can now follow the semantic chain directly:
+
+```text
+get_run
+   |
+   v
+Finding.evidence_refs[]
+   |
+   v
+get_evidence(run_id, evidence_id)
+   |
+   v
+exact normalized Evidence
+```
+
+The important invariant is that the CLI, CI, and MCP adapter all use the same canonical Run and Evidence models:
 
 ```text
 CLI / CI / coding agent
@@ -77,7 +93,9 @@ CLI / CI / coding agent
  same canonical Run store
 ```
 
-The v0.0.8 MCP surface is deliberately local and read-only. It does not create Runs, execute target commands, bind a network listener, expose arbitrary filesystem reads, follow Run-store symlink escapes, or mutate Run artifacts. Tool-level validation/data failures remain MCP tool errors and do not terminate a healthy server.
+The MCP surface is deliberately local and read-only. It does not create Runs, execute target commands, bind a network listener, expose arbitrary filesystem reads, follow Run-store symlink escapes, or mutate Run artifacts. Tool-level validation/data failures remain MCP tool errors and do not terminate a healthy server.
+
+`get_evidence` validates the canonical Run boundary first and rejects invalid identifiers, malformed Evidence, cross-Run records, duplicate Evidence IDs, missing Evidence, and non-regular or symlinked `evidence.jsonl` files rather than returning an ambiguous observation.
 
 The server reads Runs only from the working directory's local store:
 
@@ -320,7 +338,7 @@ Black-box acceptance tests are written and reviewed first. During implementation
 
 ## Current scope
 
-v0.0.8 includes:
+v0.0.9 includes:
 
 - universal Runner core;
 - Git and process evidence;
@@ -332,9 +350,10 @@ v0.0.8 includes:
 - explicit local baseline selection through `--baseline <run_id>`;
 - deterministic `new`, `resolved`, and `unchanged` Finding comparison;
 - explicit baseline-aware Finding gate scope through `--gate-scope all|new`;
-- local read-only MCP stdio access through `list_runs` and `get_run`;
+- local read-only MCP stdio access through `list_runs`, `get_run`, and `get_evidence`;
+- exact Finding-to-Evidence dereferencing through stable `evidence_refs`;
 - real upstream OTEL and real Rails interoperability gates.
 
-Still deliberately deferred are MCP Run execution, raw Evidence search/pagination through MCP, stdout/stderr retrieval through MCP, automatic baseline selection, metric-aware `regressed`/`improved` comparison, configurable per-rule policies, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, remote Run stores, MCP resources/prompts, and local-to-production correlation.
+Still deliberately deferred are MCP Run execution, Evidence listing/search/pagination through MCP, stdout/stderr retrieval through MCP, automatic baseline selection, metric-aware `regressed`/`improved` comparison, configurable per-rule policies, ActiveRecord query regression/N+1 analysis, browser evidence, deeper PostgreSQL analysis, remote Run stores, MCP resources/prompts, and local-to-production correlation.
 
-Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, normalized Evidence uses `schemas/evidence-v1.schema.json`, and the MCP v0.0.8 contract is `specs/mcp-v0.0.8.md`.
+Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, normalized Evidence uses `schemas/evidence-v1.schema.json`, the MCP Run read contract is `specs/mcp-v0.0.8.md`, and the MCP Evidence read contract is `specs/mcp-evidence-v0.0.9.md`.

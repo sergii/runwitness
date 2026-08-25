@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.0.9
+
+Adds exact Finding-to-Evidence dereferencing to the local read-only MCP surface.
+
+### Added
+
+- read-only `get_evidence(run_id, evidence_id)` MCP tool
+- direct traversal from `Finding.evidence_refs` to the exact normalized Evidence v1 record
+- canonical Run validation before Evidence lookup
+- validation for Evidence IDs, malformed JSONL records, cross-Run records, duplicate IDs, missing Evidence, and symlink/non-regular Evidence files
+- machine-readable `structuredContent.evidence` containing the exact stored normalized Evidence object
+- black-box acceptance coverage for Evidence dereferencing and integrity failures
+
+### Changed
+
+- the stable MCP tool surface is now exactly `list_runs`, `get_run`, and `get_evidence`
+- `runwitness --version` now reports `RunWitness v0.0.9`
+- README documents the Run -> Finding -> Evidence agent workflow
+
+### Preserved
+
+- MCP remains local stdio and read-only
+- MCP does not create Runs, execute commands, bind a network listener, or mutate Run artifacts
+- existing `list_runs` and `get_run` behavior remains compatible
+- Evidence is returned without reinterpretation, summarization, enrichment, or field omission
+- real upstream `otlp-mcp` and real Rails 8.1 / Ruby 3.4 interoperability remain release gates
+
+### Why it matters
+
+v0.0.9 closes the first semantic agent read chain. A coding agent can inspect a Run, identify a Finding, follow its `evidence_refs`, and retrieve the exact normalized observation that supports the Finding without scraping files or receiving a second interpretation layer.
+
+### Deferred
+
+Evidence listing/search/pagination, MCP Run execution, stdout/stderr retrieval, automatic baseline selection, remote Run stores, MCP resources/prompts, metric-aware `regressed`/`improved` semantics, ActiveRecord query regression/N+1 analysis, browser correlation, deeper PostgreSQL analysis, and production correlation remain future contract slices.
+
 ## v0.0.8
 
 Adds the first public agent-native read surface over the canonical local Run store through MCP.
