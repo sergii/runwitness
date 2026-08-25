@@ -190,6 +190,38 @@ class RunWitnessV001Contract(unittest.TestCase):
             self.assertIsNotNone(git["after"].get("diff_hash"))
             self.assertNotEqual(git["before"]["diff_hash"], git["after"]["diff_hash"])
 
+    def test_runwitness_artifacts_do_not_pollute_observed_git_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cwd = Path(temp)
+            subprocess.run(["git", "init"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "config", "user.email", "contract@example.test"], cwd=cwd, check=True)
+            subprocess.run(["git", "config", "user.name", "RunWitness Contract"], cwd=cwd, check=True)
+
+            tracked = cwd / "tracked.txt"
+            tracked.write_text("committed\n")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=cwd, check=True)
+            subprocess.run(["git", "commit", "-m", "fixture"], cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            result = self.run_runner(cwd, [sys.executable, "-c", "print('ok')"])
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            _, document = self.load_single_run(cwd)
+
+            git = document["run"]["git"]
+            self.assertFalse(git["before"]["dirty"])
+            self.assertFalse(git["after"]["dirty"])
+            self.assertIsNone(git["before"].get("diff_hash"))
+            self.assertIsNone(git["after"].get("diff_hash"))
+
+            status = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=normal", "--", ".", ":(exclude).runwitness", ":(exclude).runwitness/**"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+            self.assertEqual("", status, "RunWitness artifacts must be the only repository-local changes")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
