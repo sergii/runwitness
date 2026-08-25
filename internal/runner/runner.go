@@ -20,7 +20,7 @@ import (
 	"github.com/sergii/runwitness/internal/oteladapter"
 )
 
-const Version = "0.0.9"
+const Version = "0.0.10"
 
 type Document struct {
 	SchemaVersion int       `json:"schema_version"`
