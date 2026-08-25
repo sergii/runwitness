@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/sergii/runwitness/internal/gateintegration"
 	"github.com/sergii/runwitness/internal/mcpintegration"
+	"github.com/sergii/runwitness/internal/queryregressiongateintegration"
 )
 
 func main() {
@@ -12,5 +12,5 @@ func main() {
 	if len(args) == 1 && args[0] == "mcp" {
 		os.Exit(mcpintegration.Main())
 	}
-	os.Exit(gateintegration.Main(args))
+	os.Exit(queryregressiongateintegration.Main(args))
 }
