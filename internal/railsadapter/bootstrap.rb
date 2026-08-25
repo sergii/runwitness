@@ -59,6 +59,12 @@ module RunWitnessRailsAdapter
     {}
   end
 
+  def normalize_sql(statement)
+    statement.to_s.strip.gsub(/\s+/, " ")
+  rescue Exception
+    ""
+  end
+
   class Subscriber
     def report(error, handled:, severity:, context:, source: "application")
       location = RunWitnessRailsAdapter.normalized_location(error)
@@ -80,20 +86,72 @@ module RunWitnessRailsAdapter
     end
   end
 
-  def install!
-    return true if @installed
+  def install_error!
+    return true if @error_installed
     return false unless defined?(Rails) && Rails.respond_to?(:error)
 
     reporter = Rails.error
     return false unless reporter && reporter.respond_to?(:subscribe)
 
     reporter.subscribe(Subscriber.new)
-    @installed = true
+    @error_installed = true
     write_event(
       "type" => "subscribed",
       "observed_at" => Time.now.utc.iso8601(9),
     )
     true
+  rescue Exception
+    false
+  end
+
+  def install_sql!
+    return true if @sql_installed
+    return false unless defined?(ActiveSupport::Notifications)
+    return false unless ActiveSupport::Notifications.respond_to?(:subscribe)
+
+    ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, started, finished, _event_id, payload|
+      begin
+        payload ||= {}
+        cached = !!payload[:cached]
+        statement = normalize_sql(payload[:sql])
+        query_name = payload[:name].to_s
+        ignored_name = ["SCHEMA", "TRANSACTION"].include?(query_name.upcase)
+        next if cached || statement.empty? || ignored_name
+
+        duration_ms = begin
+          value = (finished - started).to_f * 1000.0
+          value.negative? ? 0.0 : value
+        rescue Exception
+          0.0
+        end
+        observed_at = begin
+          finished.utc.iso8601(9)
+        rescue Exception
+          Time.now.utc.iso8601(9)
+        end
+
+        write_event(
+          "type" => "sql",
+          "observed_at" => observed_at,
+          "sql_statement" => statement,
+          "sql_name" => query_name,
+          "sql_cached" => false,
+          "duration_ms" => duration_ms,
+        )
+      rescue Exception
+        nil
+      end
+    end
+    @sql_installed = true
+    true
+  rescue Exception
+    false
+  end
+
+  def install!
+    error_installed = install_error!
+    install_sql!
+    error_installed
   rescue Exception
     false
   end
