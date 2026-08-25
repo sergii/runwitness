@@ -88,11 +88,13 @@ module RunWitnessRailsAdapter
 
   def install_error!
     return true if @error_installed
+    return false if @error_installing
     return false unless defined?(Rails) && Rails.respond_to?(:error)
 
     reporter = Rails.error
     return false unless reporter && reporter.respond_to?(:subscribe)
 
+    @error_installing = true
     reporter.subscribe(Subscriber.new)
     @error_installed = true
     write_event(
@@ -102,13 +104,17 @@ module RunWitnessRailsAdapter
     true
   rescue Exception
     false
+  ensure
+    @error_installing = false
   end
 
   def install_sql!
     return true if @sql_installed
+    return false if @sql_installing
     return false unless defined?(ActiveSupport::Notifications)
     return false unless ActiveSupport::Notifications.respond_to?(:subscribe)
 
+    @sql_installing = true
     ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, started, finished, _event_id, payload|
       begin
         payload ||= {}
@@ -146,6 +152,8 @@ module RunWitnessRailsAdapter
     true
   rescue Exception
     false
+  ensure
+    @sql_installing = false
   end
 
   def install!
