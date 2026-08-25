@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"github.com/sergii/runwitness/internal/gateintegration"
 )
@@ -17,17 +19,24 @@ const (
 	railsQueryCountRuleID = "rails.sql.query_count"
 )
 
+type queryRegressionPolicy struct {
+	Requested         bool
+	HasBaseline       bool
+	Tolerance         int
+	ToleranceExplicit bool
+}
+
 func Main(args []string) int {
-	stripped, requested, hasBaseline, err := stripQueryRegressionGate(args)
+	stripped, policy, err := stripQueryRegressionGate(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usage())
 		return 2
 	}
-	if !requested {
+	if !policy.Requested {
 		return gateintegration.Main(args)
 	}
-	if !hasBaseline {
+	if !policy.HasBaseline {
 		fmt.Fprintln(os.Stderr, "--fail-on-query-regression requires --baseline")
 		return 2
 	}
@@ -60,7 +69,7 @@ func Main(args []string) int {
 		return resultExit
 	}
 
-	finalExit, err := applyQueryRegressionGate(runDirectory, resultExit)
+	finalExit, err := applyQueryRegressionGate(runDirectory, resultExit, policy)
 	if err != nil {
 		message := fmt.Sprintf("query regression gate failed: %v", err)
 		_ = markGateError(runDirectory, message)
@@ -71,17 +80,16 @@ func Main(args []string) int {
 }
 
 func usage() string {
-	return "usage: runwitness run [--label <name>] [--otel] [--rails] [--baseline <run_id>] [--gate-scope <all|new>] [--fail-on-query-regression] -- <command> [args...]"
+	return "usage: runwitness run [--label <name>] [--otel] [--rails] [--baseline <run_id>] [--gate-scope <all|new>] [--fail-on-query-regression] [--query-count-tolerance <queries>] -- <command> [args...]"
 }
 
-func stripQueryRegressionGate(args []string) ([]string, bool, bool, error) {
+func stripQueryRegressionGate(args []string) ([]string, queryRegressionPolicy, error) {
+	policy := queryRegressionPolicy{}
 	if len(args) == 0 || args[0] != "run" {
-		return append([]string(nil), args...), false, false, nil
+		return append([]string(nil), args...), policy, nil
 	}
 
 	result := make([]string, 0, len(args))
-	requested := false
-	hasBaseline := false
 	beforeSeparator := true
 
 	for index := 0; index < len(args); index++ {
@@ -92,7 +100,7 @@ func stripQueryRegressionGate(args []string) ([]string, bool, bool, error) {
 			continue
 		}
 		if beforeSeparator && argument == "--baseline" {
-			hasBaseline = true
+			policy.HasBaseline = true
 			result = append(result, argument)
 			if index+1 < len(args) {
 				index++
@@ -101,19 +109,39 @@ func stripQueryRegressionGate(args []string) ([]string, bool, bool, error) {
 			continue
 		}
 		if beforeSeparator && argument == "--fail-on-query-regression" {
-			if requested {
-				return nil, false, false, errors.New("--fail-on-query-regression may be specified only once")
+			if policy.Requested {
+				return nil, queryRegressionPolicy{}, errors.New("--fail-on-query-regression may be specified only once")
 			}
-			requested = true
+			policy.Requested = true
+			continue
+		}
+		if beforeSeparator && argument == "--query-count-tolerance" {
+			if policy.ToleranceExplicit {
+				return nil, queryRegressionPolicy{}, errors.New("--query-count-tolerance may be specified only once")
+			}
+			if index+1 >= len(args) || args[index+1] == "--" || args[index+1] == "" {
+				return nil, queryRegressionPolicy{}, errors.New("--query-count-tolerance requires a non-negative integer")
+			}
+			value, parseErr := strconv.Atoi(args[index+1])
+			if parseErr != nil || value < 0 {
+				return nil, queryRegressionPolicy{}, fmt.Errorf("--query-count-tolerance requires a non-negative integer; got %q", args[index+1])
+			}
+			policy.Tolerance = value
+			policy.ToleranceExplicit = true
+			index++
 			continue
 		}
 		result = append(result, argument)
 	}
 
-	return result, requested, hasBaseline, nil
+	if policy.ToleranceExplicit && !policy.Requested {
+		return nil, queryRegressionPolicy{}, errors.New("--query-count-tolerance requires --fail-on-query-regression")
+	}
+
+	return result, policy, nil
 }
 
-func applyQueryRegressionGate(runDirectory string, originalExit int) (int, error) {
+func applyQueryRegressionGate(runDirectory string, originalExit int, policy queryRegressionPolicy) (int, error) {
 	document, err := readRunDocument(filepath.Join(runDirectory, "run.json"))
 	if err != nil {
 		return 2, err
@@ -134,13 +162,15 @@ func applyQueryRegressionGate(runDirectory string, originalExit int) (int, error
 	}
 
 	if stringValue(verdict["status"]) == "error" {
-		gates = append(gates, map[string]any{
+		gate := map[string]any{
 			"rule_id":     queryRegressionRuleID,
 			"action":      "fail",
 			"outcome":     "skipped",
 			"finding_ids": []string{},
 			"message":     "query regression gate skipped because Run verdict is error",
-		})
+		}
+		applyToleranceParameters(gate, policy)
+		gates = append(gates, gate)
 		verdict["gates"] = gates
 		if err := writeRunDocument(runDirectory, document); err != nil {
 			return 2, err
@@ -157,7 +187,7 @@ func applyQueryRegressionGate(runDirectory string, originalExit int) (int, error
 		return 2, fmt.Errorf("read regressed Finding IDs: %w", err)
 	}
 
-	eligible, err := eligibleQueryRegressionIDs(document, regressed)
+	eligible, err := eligibleQueryRegressionIDs(document, regressed, policy.Tolerance)
 	if err != nil {
 		return 2, err
 	}
@@ -166,13 +196,15 @@ func applyQueryRegressionGate(runDirectory string, originalExit int) (int, error
 	if len(eligible) > 0 {
 		outcome = "triggered"
 	}
-	gates = append(gates, map[string]any{
+	gate := map[string]any{
 		"rule_id":     queryRegressionRuleID,
 		"action":      "fail",
 		"outcome":     outcome,
 		"finding_ids": eligible,
-		"message":     fmt.Sprintf("%d query-count regression finding(s) observed", len(eligible)),
-	})
+		"message":     queryRegressionMessage(len(eligible), policy),
+	}
+	applyToleranceParameters(gate, policy)
+	gates = append(gates, gate)
 	verdict["gates"] = gates
 
 	if len(eligible) > 0 {
@@ -185,7 +217,24 @@ func applyQueryRegressionGate(runDirectory string, originalExit int) (int, error
 	return exitCodeForVerdict(stringValue(verdict["status"]), originalExit), nil
 }
 
-func eligibleQueryRegressionIDs(document map[string]any, regressed []string) ([]string, error) {
+func queryRegressionMessage(eligibleCount int, policy queryRegressionPolicy) string {
+	if policy.ToleranceExplicit {
+		return fmt.Sprintf("%d query-count regression finding(s) exceeded tolerance %d queries", eligibleCount, policy.Tolerance)
+	}
+	return fmt.Sprintf("%d query-count regression finding(s) observed", eligibleCount)
+}
+
+func applyToleranceParameters(gate map[string]any, policy queryRegressionPolicy) {
+	if !policy.ToleranceExplicit {
+		return
+	}
+	gate["parameters"] = map[string]any{
+		"max_delta": policy.Tolerance,
+		"unit":      "queries",
+	}
+}
+
+func eligibleQueryRegressionIDs(document map[string]any, regressed []string, tolerance int) ([]string, error) {
 	regressedSet := stringSet(regressed)
 	findings, err := objectArray(document["findings"])
 	if err != nil {
@@ -204,7 +253,14 @@ func eligibleQueryRegressionIDs(document map[string]any, regressed []string) ([]
 		if stringValue(finding["rule_id"]) != railsQueryCountRuleID {
 			continue
 		}
-		eligibleSet[findingID] = struct{}{}
+
+		delta, err := queryCountDelta(finding)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate query-count Finding %q: %w", findingID, err)
+		}
+		if delta > float64(tolerance) {
+			eligibleSet[findingID] = struct{}{}
+		}
 	}
 
 	eligible := make([]string, 0, len(eligibleSet))
@@ -213,6 +269,53 @@ func eligibleQueryRegressionIDs(document map[string]any, regressed []string) ([]
 	}
 	sort.Strings(eligible)
 	return eligible, nil
+}
+
+func queryCountDelta(finding map[string]any) (float64, error) {
+	comparison, ok := finding["comparison"].(map[string]any)
+	if !ok {
+		return 0, errors.New("comparison is missing or is not an object")
+	}
+
+	raw, exists := comparison["delta"]
+	if !exists {
+		return 0, errors.New("comparison.delta is missing")
+	}
+
+	var delta float64
+	switch value := raw.(type) {
+	case float64:
+		delta = value
+	case float32:
+		delta = float64(value)
+	case int:
+		delta = float64(value)
+	case int8:
+		delta = float64(value)
+	case int16:
+		delta = float64(value)
+	case int32:
+		delta = float64(value)
+	case int64:
+		delta = float64(value)
+	case uint:
+		delta = float64(value)
+	case uint8:
+		delta = float64(value)
+	case uint16:
+		delta = float64(value)
+	case uint32:
+		delta = float64(value)
+	case uint64:
+		delta = float64(value)
+	default:
+		return 0, fmt.Errorf("comparison.delta must be an integer query count, got %T", raw)
+	}
+
+	if math.IsNaN(delta) || math.IsInf(delta, 0) || delta < 0 || math.Trunc(delta) != delta {
+		return 0, fmt.Errorf("comparison.delta must be a non-negative integer query count, got %v", raw)
+	}
+	return delta, nil
 }
 
 func exitCodeForVerdict(status string, fallback int) int {
