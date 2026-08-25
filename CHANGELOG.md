@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.0.5
+
+Adds the first framework-specific runtime adapter for Rails.
+
+### Added
+
+- explicit `runwitness run --rails -- <command>` observation mode
+- standard `Rails.error` subscriber integration
+- normalized `rails.error` Evidence
+- deterministic `runtime.handled_error` Findings for handled Rails error reports
+- composition of Rails Findings into the existing `runtime.no_errors` fail gate
+- required-adapter error semantics when explicit Rails observation cannot be confirmed
+- real Rails 8.1 / Ruby 3.4 interoperability release gate
+- immutable release-tag automation tied to the exact successful `main` CI commit
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.5`
+- README documents Rails runtime observation and the successful-tests-but-failed-runtime-gate workflow
+
+### Preserved
+
+- target process exit codes are never rewritten by Rails Findings or gates
+- Rails Evidence references remain Run-local
+- semantic Finding identity remains deterministic across Runs
+- the universal Runner core remains framework-agnostic
+- OpenTelemetry evidence and the real upstream `otlp-mcp` interoperability gate remain unchanged
+- RunWitness/instrumentation errors retain verdict `error` and CLI exit `2`
+
+### Why it matters
+
+v0.0.5 demonstrates the core RunWitness product value directly in Rails: a test command may exit `0` while `Rails.error` proves that a handled runtime problem occurred, allowing RunWitness to fail the behavioral quality gate before the change ships.
+
+### Deferred
+
+Automatic Rails detection, ActiveRecord query regression/N+1 analysis, baseline Run diffing, browser correlation, deeper PostgreSQL analysis, public RunWitness MCP tools, and production correlation remain future contract slices.
+
 ## v0.0.4
 
 Makes semantic Finding identity stable across independent Runs.
