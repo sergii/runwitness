@@ -61,3 +61,55 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o bin/cross/runwitness-darwin-amd64 ./cmd/runwitness
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bin/cross/runwitness-darwin-arm64 ./cmd/runwitness
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/cross/runwitness-windows-amd64.exe ./cmd/runwitness
+
+  otel-integration:
+    runs-on: ubuntu-24.04
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go for upstream otlp-mcp
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Build RunWitness
+        run: |
+          mkdir -p bin
+          go build -o bin/runwitness ./cmd/runwitness
+
+      - name: Install pinned upstream otlp-mcp
+        run: go install github.com/tobert/otlp-mcp/cmd/otlp-mcp@0498ed0c6abb1f1cb54cf698c921082b5c826c9f
+
+      - name: Smoke real otlp-mcp interoperability
+        run: |
+          set -euo pipefail
+          smoke_dir="$(mktemp -d)"
+          export SMOKE_DIR="$smoke_dir"
+          export RUNWITNESS_OTLP_MCP_BIN="$(go env GOPATH)/bin/otlp-mcp"
+
+          (
+            cd "$smoke_dir"
+            "$GITHUB_WORKSPACE/bin/runwitness" run --otel -- /bin/true
+          )
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = list((Path(os.environ["SMOKE_DIR"]) / ".runwitness" / "runs").iterdir())
+          assert len(runs) == 1, runs
+
+          document = json.loads((runs[0] / "run.json").read_text())
+          assert document["verdict"]["status"] == "pass", document
+          assert document["run"]["process"]["exit_code"] == 0, document
+          assert document["summary"]["evidence_count"] == 0, document
+
+          adapters = [adapter for adapter in document["adapters"] if adapter["name"] == "otel"]
+          assert len(adapters) == 1, document
+          assert adapters[0]["status"] == "ok", document
+          assert (runs[0] / "evidence.jsonl").read_text() == ""
+          PY
