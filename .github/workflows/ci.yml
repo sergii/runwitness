@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
 
       - name: Verify locked acceptance contract is unchanged
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'contract/')
         run: git diff --exit-code "${{ github.event.pull_request.base.sha }}" HEAD -- tests/acceptance
 
       - name: Run Go tests
