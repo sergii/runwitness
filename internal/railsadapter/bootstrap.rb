@@ -65,6 +65,26 @@ module RunWitnessRailsAdapter
     ""
   end
 
+  def precise_time_token(value)
+    return value.to_r.to_s if value.respond_to?(:to_r)
+
+    value.to_s
+  rescue Exception
+    value.to_s
+  end
+
+  def sql_event_key(event_id, started, finished, statement, query_name)
+    [
+      event_id.to_s,
+      precise_time_token(started),
+      precise_time_token(finished),
+      statement,
+      query_name,
+    ].join("\0")
+  rescue Exception
+    ""
+  end
+
   class Subscriber
     def report(error, handled:, severity:, context:, source: "application")
       location = RunWitnessRailsAdapter.normalized_location(error)
@@ -115,7 +135,7 @@ module RunWitnessRailsAdapter
     return false unless ActiveSupport::Notifications.respond_to?(:subscribe)
 
     @sql_installing = true
-    ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, started, finished, _event_id, payload|
+    ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, started, finished, event_id, payload|
       begin
         payload ||= {}
         cached = !!payload[:cached]
@@ -139,6 +159,7 @@ module RunWitnessRailsAdapter
         write_event(
           "type" => "sql",
           "observed_at" => observed_at,
+          "sql_event_key" => sql_event_key(event_id, started, finished, statement, query_name),
           "sql_statement" => statement,
           "sql_name" => query_name,
           "sql_cached" => false,
