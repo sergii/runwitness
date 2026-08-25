@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify locked acceptance contract is unchanged
+        if: github.event_name == 'pull_request'
+        run: git diff --exit-code "${{ github.event.pull_request.base.sha }}" HEAD -- tests/acceptance
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build Runner
+        run: |
+          mkdir -p bin
+          go build -o bin/runwitness ./cmd/runwitness
+
+      - name: Install acceptance dependencies
+        run: python -m pip install -r tests/acceptance/requirements.txt
+
+      - name: Run locked acceptance contract
+        run: python tests/acceptance/test_runner_v001.py
