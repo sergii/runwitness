@@ -2,7 +2,7 @@
 
 RunWitness is a local execution witness for developers, CI systems, and coding agents.
 
-It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, and a versioned machine-readable result. v0.0.2 adds opt-in OpenTelemetry Evidence collection without turning RunWitness into another telemetry backend.
+It runs a command inside an explicit Run boundary and records what actually happened: process outcome, stdout/stderr, repository state before and after execution, and versioned machine-readable runtime evidence. v0.0.3 adds the first semantic Finding and quality gate on top of OpenTelemetry Evidence.
 
 The core question is:
 
@@ -13,14 +13,14 @@ The core question is:
 RunWitness requires Go 1.23 or newer when installed from source/module:
 
 ```bash
-go install github.com/sergii/runwitness/cmd/runwitness@v0.0.2
+go install github.com/sergii/runwitness/cmd/runwitness@v0.0.3
 ```
 
 Check the version:
 
 ```bash
 runwitness --version
-# RunWitness v0.0.2
+# RunWitness v0.0.3
 ```
 
 ## Run commands
@@ -55,13 +55,13 @@ Each Run is stored under:
 
 ## OpenTelemetry evidence
 
-v0.0.2 adds the first runtime Evidence adapter:
+Observe a command with OpenTelemetry:
 
 ```bash
 runwitness run --otel -- bundle exec rspec
 ```
 
-RunWitness deliberately does not implement its own OTLP collector. The v0.0.2 reference adapter uses [`tobert/otlp-mcp`](https://github.com/tobert/otlp-mcp) as a local, Run-owned backend.
+RunWitness deliberately does not implement its own OTLP collector. The reference adapter uses [`tobert/otlp-mcp`](https://github.com/tobert/otlp-mcp) as a local, Run-owned backend.
 
 Install `otlp-mcp` separately and make sure it is available on `PATH`. One upstream-supported source installation path is:
 
@@ -101,9 +101,39 @@ otel.metric
 
 The Evidence schema is `schemas/evidence-v1.schema.json`.
 
-RunWitness does not auto-instrument Ruby, Python, Node.js, or another runtime in v0.0.2. Existing OpenTelemetry instrumentation or a future language adapter is responsible for emitting telemetry.
+RunWitness does not yet auto-instrument Ruby, Python, Node.js, or another runtime. Existing OpenTelemetry instrumentation or a future language adapter is responsible for emitting telemetry.
 
 If `--otel` is explicitly requested but the backend cannot be started or observed reliably, RunWitness returns verdict `error` rather than pretending the application failed or claiming a complete observation.
+
+## Runtime findings and gates
+
+v0.0.3 adds the first semantic rule over normalized Evidence:
+
+```text
+otel.span status=ERROR
+        ↓
+runtime.error Finding
+        ↓
+runtime.no_errors gate
+        ↓
+verdict fail
+```
+
+For each normalized OpenTelemetry span whose status is `ERROR`, RunWitness records a `runtime.error` Finding in `run.json`. The Finding references the exact Evidence record that caused it and carries rule ID `otel.span.error`.
+
+Those Findings trigger the built-in `runtime.no_errors` gate with action `fail`.
+
+This allows process status and observed runtime behavior to remain separate. For example, a test command can exit successfully while runtime telemetry still proves an application error occurred:
+
+```text
+target exit code: 0
+runtime.error findings: 1
+runtime.no_errors: triggered
+RunWitness verdict: fail
+RunWitness CLI exit: 1
+```
+
+RunWitness does not rewrite the target exit code. A RunWitness or instrumentation failure still has higher priority and produces verdict `error` with CLI exit `2`.
 
 ## Git state
 
@@ -126,7 +156,7 @@ The stable CLI mapping is:
 
 ```text
 0 = pass or warn
-1 = target/application failure
+1 = target/application or runtime quality-gate failure
 2 = RunWitness/usage/instrumentation error
 ```
 
@@ -146,8 +176,8 @@ Black-box acceptance tests are written and reviewed first. During the implementa
 
 ## Current scope
 
-v0.0.2 consists of the universal Runner core plus the first OpenTelemetry Evidence adapter.
+v0.0.3 consists of the universal Runner core, the OpenTelemetry Evidence adapter, and the first semantic runtime Finding and quality gate.
 
-Still deliberately deferred are Ruby/Rails-specific evidence, Findings, baselines and Run diffs, quality gates, browser evidence, PostgreSQL analysis, MCP as a public RunWitness interface, and local-to-production correlation.
+Still deliberately deferred are error-log and exception-event Findings, configurable gate policy, baselines and Run diffs, Ruby/Rails auto-instrumentation, browser evidence, PostgreSQL analysis, MCP as a public RunWitness interface, and local-to-production correlation.
 
 Relevant specifications live under `specs/`. The canonical Run JSON Schema is `schemas/run-v1.schema.json`, and normalized Evidence uses `schemas/evidence-v1.schema.json`.

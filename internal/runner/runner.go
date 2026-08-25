@@ -20,7 +20,7 @@ import (
 	"github.com/sergii/runwitness/internal/oteladapter"
 )
 
-const Version = "0.0.2"
+const Version = "0.0.3"
 
 type Document struct {
 	SchemaVersion int       `json:"schema_version"`
@@ -247,7 +247,6 @@ func ExecuteWithOptions(options RunOptions) (string, error) {
 	var otelStartSnapshot string
 	var otelEndSnapshot string
 	var preTargetError error
-
 	if options.OTEL {
 		binary, resolveErr := oteladapter.ResolveBinary()
 		if resolveErr != nil {

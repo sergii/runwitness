@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.0.3
+
+Adds the first semantic runtime Finding and quality gate on top of normalized OpenTelemetry Evidence.
+
+### Added
+
+- `runtime.error` Findings derived from normalized `otel.span` records with status `ERROR`
+- stable Finding-to-Evidence references
+- `otel.span.error` built-in rule identity
+- `runtime.no_errors` deterministic fail gate
+- semantic distinction between successful target process exit and failed observed runtime behavior
+- acceptance coverage proving target exit `0` can produce RunWitness verdict `fail` and CLI exit `1`
+
+### Changed
+
+- `runwitness --version` now reports `RunWitness v0.0.3`
+- `summary.finding_count` now reflects generated semantic Findings
+- CLI exit `1` now also represents a triggered runtime fail gate, not only a non-zero target process
+
+### Preserved
+
+- Evidence v1 remains unchanged
+- the OpenTelemetry adapter remains opt-in through `--otel`
+- adapter and RunWitness failures retain verdict `error` and CLI exit `2`
+- target process exit codes are never rewritten by Findings or gates
+- real upstream `otlp-mcp` interoperability remains a release gate
+
+### Deferred
+
+Error-log and exception-event Findings, configurable gate policy, baseline diffing, Ruby/Rails auto-instrumentation, browser correlation, database analysis, public RunWitness MCP tools, and production correlation remain future contract slices.
+
 ## v0.0.2
 
 Adds the first runtime Evidence adapter while preserving the v0.0.1 Runner core contract.
