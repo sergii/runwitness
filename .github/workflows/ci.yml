@@ -19,6 +19,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+          cache: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,8 +30,17 @@ jobs:
         if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'contract/')
         run: git diff --exit-code "${{ github.event.pull_request.base.sha }}" HEAD -- tests/acceptance
 
+      - name: Verify Go formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run go vet
+        run: go vet ./...
+
       - name: Run Go tests
         run: go test ./...
+
+      - name: Run race detector
+        run: go test -race ./...
 
       - name: Build Runner
         run: |
@@ -42,3 +52,12 @@ jobs:
 
       - name: Run locked acceptance contract
         run: python -m unittest discover -s tests/acceptance -p 'test_*.py' -v
+
+      - name: Cross-compile release targets
+        run: |
+          mkdir -p bin/cross
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/cross/runwitness-linux-amd64 ./cmd/runwitness
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/cross/runwitness-linux-arm64 ./cmd/runwitness
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o bin/cross/runwitness-darwin-amd64 ./cmd/runwitness
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bin/cross/runwitness-darwin-arm64 ./cmd/runwitness
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/cross/runwitness-windows-amd64.exe ./cmd/runwitness
